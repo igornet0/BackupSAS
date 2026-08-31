@@ -1,8 +1,8 @@
+use super::BackupRepository;
 use super::filesystem::FilesystemBackupRepository;
-use super::{BackupRepository};
 use backupsas_core::{
-    hash_bytes, BackupId, BackupManifest, BackupState, ChunkInfo, CommitRecord, DatabaseId,
-    DEFAULT_KEY_ID,
+    BackupId, BackupManifest, BackupState, ChunkInfo, CommitRecord, DEFAULT_KEY_ID, DatabaseId,
+    hash_bytes,
 };
 use time::OffsetDateTime;
 
@@ -39,7 +39,14 @@ fn build_fixture() -> ContractFixture {
         chunks.push(data);
     }
     let total = 96u64;
-    let manifest = BackupManifest::new(backup_id, database_id, 32, total, chunk_infos.clone(), DEFAULT_KEY_ID);
+    let manifest = BackupManifest::new(
+        backup_id,
+        database_id,
+        32,
+        total,
+        chunk_infos.clone(),
+        DEFAULT_KEY_ID,
+    );
     ContractFixture {
         backup_id,
         manifest,
@@ -63,7 +70,9 @@ async fn test_write_chunks<R: BackupRepository>(repo: &R) {
     let fixture = build_fixture();
     repo.create(&fixture.manifest).await.unwrap();
     for (chunk, data) in fixture.chunk_infos.iter().zip(fixture.chunks.iter()) {
-        repo.write_chunk(&fixture.backup_id, chunk, data).await.unwrap();
+        repo.write_chunk(&fixture.backup_id, chunk, data)
+            .await
+            .unwrap();
     }
     let info = repo.inspect(&fixture.backup_id).await.unwrap();
     assert_eq!(info.chunks_received, 3);
@@ -73,7 +82,9 @@ async fn test_verify_before_finalize<R: BackupRepository>(repo: &R) {
     let fixture = build_fixture();
     repo.create(&fixture.manifest).await.unwrap();
     for (chunk, data) in fixture.chunk_infos.iter().zip(fixture.chunks.iter()) {
-        repo.write_chunk(&fixture.backup_id, chunk, data).await.unwrap();
+        repo.write_chunk(&fixture.backup_id, chunk, data)
+            .await
+            .unwrap();
     }
     let report = repo.verify(&fixture.backup_id).await.unwrap();
     assert!(report.valid, "expected valid verify before finalize");
@@ -83,7 +94,9 @@ async fn test_finalize<R: BackupRepository>(repo: &R) {
     let fixture = build_fixture();
     repo.create(&fixture.manifest).await.unwrap();
     for (chunk, data) in fixture.chunk_infos.iter().zip(fixture.chunks.iter()) {
-        repo.write_chunk(&fixture.backup_id, chunk, data).await.unwrap();
+        repo.write_chunk(&fixture.backup_id, chunk, data)
+            .await
+            .unwrap();
     }
     let commit = CommitRecord::new(
         fixture.backup_id,
@@ -101,7 +114,9 @@ async fn test_inspect_complete<R: BackupRepository>(repo: &R) {
     let fixture = build_fixture();
     repo.create(&fixture.manifest).await.unwrap();
     for (chunk, data) in fixture.chunk_infos.iter().zip(fixture.chunks.iter()) {
-        repo.write_chunk(&fixture.backup_id, chunk, data).await.unwrap();
+        repo.write_chunk(&fixture.backup_id, chunk, data)
+            .await
+            .unwrap();
     }
     let commit = CommitRecord::new(
         fixture.backup_id,
@@ -119,7 +134,9 @@ async fn test_verify_complete<R: BackupRepository>(repo: &R) {
     let fixture = build_fixture();
     repo.create(&fixture.manifest).await.unwrap();
     for (chunk, data) in fixture.chunk_infos.iter().zip(fixture.chunks.iter()) {
-        repo.write_chunk(&fixture.backup_id, chunk, data).await.unwrap();
+        repo.write_chunk(&fixture.backup_id, chunk, data)
+            .await
+            .unwrap();
     }
     let commit = CommitRecord::new(
         fixture.backup_id,
@@ -135,16 +152,22 @@ async fn test_verify_complete<R: BackupRepository>(repo: &R) {
 async fn test_delete<R: BackupRepository>(repo: &R) {
     let fixture = build_fixture();
     repo.create(&fixture.manifest).await.unwrap();
-    repo.write_chunk(&fixture.backup_id, &fixture.chunk_infos[0], &fixture.chunks[0])
-        .await
-        .unwrap();
+    repo.write_chunk(
+        &fixture.backup_id,
+        &fixture.chunk_infos[0],
+        &fixture.chunks[0],
+    )
+    .await
+    .unwrap();
     repo.delete(&fixture.backup_id).await.unwrap();
     assert!(repo.inspect(&fixture.backup_id).await.is_err());
 
     let fixture2 = build_fixture();
     repo.create(&fixture2.manifest).await.unwrap();
     for (chunk, data) in fixture2.chunk_infos.iter().zip(fixture2.chunks.iter()) {
-        repo.write_chunk(&fixture2.backup_id, chunk, data).await.unwrap();
+        repo.write_chunk(&fixture2.backup_id, chunk, data)
+            .await
+            .unwrap();
     }
     let commit = CommitRecord::new(
         fixture2.backup_id,
@@ -177,12 +200,19 @@ async fn incomplete_backup_has_no_commit() {
     let repo = FilesystemBackupRepository::open(dir.path().to_path_buf(), "contract").unwrap();
     let fixture = build_fixture();
     repo.create(&fixture.manifest).await.unwrap();
-    repo.write_chunk(&fixture.backup_id, &fixture.chunk_infos[0], &fixture.chunks[0])
-        .await
-        .unwrap();
+    repo.write_chunk(
+        &fixture.backup_id,
+        &fixture.chunk_infos[0],
+        &fixture.chunks[0],
+    )
+    .await
+    .unwrap();
     let info = repo.inspect(&fixture.backup_id).await.unwrap();
     assert_eq!(info.state, BackupState::Uploading);
-    let staging = dir.path().join(".state").join(fixture.backup_id.to_string());
+    let staging = dir
+        .path()
+        .join(".state")
+        .join(fixture.backup_id.to_string());
     assert!(staging.join("manifest.json").exists());
     assert!(!staging.join("commit.json").exists());
 }
@@ -194,7 +224,9 @@ async fn finalize_rejects_bad_commit_root() {
     let fixture = build_fixture();
     repo.create(&fixture.manifest).await.unwrap();
     for (chunk, data) in fixture.chunk_infos.iter().zip(fixture.chunks.iter()) {
-        repo.write_chunk(&fixture.backup_id, chunk, data).await.unwrap();
+        repo.write_chunk(&fixture.backup_id, chunk, data)
+            .await
+            .unwrap();
     }
     let bad_commit = CommitRecord::new(
         fixture.backup_id,
@@ -202,7 +234,11 @@ async fn finalize_rejects_bad_commit_root() {
         fixture.manifest.manifest_hash.clone(),
         OffsetDateTime::now_utc(),
     );
-    assert!(repo.finalize(&fixture.backup_id, &bad_commit).await.is_err());
+    assert!(
+        repo.finalize(&fixture.backup_id, &bad_commit)
+            .await
+            .is_err()
+    );
     let info = repo.inspect(&fixture.backup_id).await.unwrap();
     assert_ne!(info.state, BackupState::Complete);
 }

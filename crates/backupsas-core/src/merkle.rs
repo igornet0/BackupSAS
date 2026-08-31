@@ -1,5 +1,5 @@
 use crate::error::{BackupSasError, Result};
-use crate::hash::{parse_hash_bytes, HASH_PREFIX};
+use crate::hash::{HASH_PREFIX, parse_hash_bytes};
 
 pub const DOMAIN_LEAF: &[u8] = b"backupsas/v1/leaf";
 pub const DOMAIN_NODE: &[u8] = b"backupsas/v1/node";

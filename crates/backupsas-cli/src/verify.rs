@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use backupsas_core::{verify_backup_dir, BackupId, VerifyResult};
+use backupsas_core::{BackupId, VerifyResult, verify_backup_dir};
 use backupsas_server::load_config;
-use backupsas_storage::{paths, BackupRecord, StorageRoot};
+use backupsas_storage::{BackupRecord, StorageRoot, paths};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -28,25 +28,21 @@ pub fn run_verify(opts: VerifyOptions) -> Result<Vec<VerifyReportLine>> {
         anyhow::bail!("specify --backup-id <id> or --all");
     }
 
-    let config = load_config(&opts.data_dir).with_context(|| {
-        format!(
-            "failed to load {}/server.toml",
-            opts.data_dir.display()
-        )
-    })?;
+    let config = load_config(&opts.data_dir)
+        .with_context(|| format!("failed to load {}/server.toml", opts.data_dir.display()))?;
     let storage = StorageRoot::open(&config)?;
     let mut lines = Vec::new();
 
     if let Some(id) = opts.backup_id {
         let id: BackupId = id.parse()?;
         let (repo, record) = storage.find_backup(&id)?;
-        if let Some(repo_filter) = &opts.repository {
-            if repo.name() != repo_filter {
-                anyhow::bail!(
-                    "backup {id} is in repository `{}`, not `{repo_filter}`",
-                    repo.name()
-                );
-            }
+        if let Some(repo_filter) = &opts.repository
+            && repo.name() != repo_filter
+        {
+            anyhow::bail!(
+                "backup {id} is in repository `{}`, not `{repo_filter}`",
+                repo.name()
+            );
         }
         let path = backup_verify_path(repo, &record);
         let result = verify_backup_dir(&path);
@@ -58,10 +54,10 @@ pub fn run_verify(opts: VerifyOptions) -> Result<Vec<VerifyReportLine>> {
         });
     } else {
         for (repo_name, record) in storage.list_all()? {
-            if let Some(repo_filter) = &opts.repository {
-                if &repo_name != repo_filter {
-                    continue;
-                }
+            if let Some(repo_filter) = &opts.repository
+                && &repo_name != repo_filter
+            {
+                continue;
             }
             let backup_id = match &record {
                 BackupRecord::Uploading(s) => s.backup_id,

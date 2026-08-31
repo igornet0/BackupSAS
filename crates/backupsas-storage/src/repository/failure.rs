@@ -1,8 +1,8 @@
-use super::filesystem::{CreateUpload, FilesystemBackupRepository};
 use super::BackupRepository;
+use super::filesystem::{CreateUpload, FilesystemBackupRepository};
 use backupsas_core::{
-    hash_bytes, BackupId, BackupManifest, BackupSasError, BackupState, ChunkInfo, ClientId,
-    CommitRecord, DatabaseId, DEFAULT_KEY_ID,
+    BackupId, BackupManifest, BackupSasError, BackupState, ChunkInfo, ClientId, CommitRecord,
+    DEFAULT_KEY_ID, DatabaseId, hash_bytes,
 };
 use time::OffsetDateTime;
 
@@ -56,7 +56,14 @@ async fn corrupt_chunk_fails_verify() {
 
     let info = repo.inspect(&backup_id).await.unwrap();
     assert_ne!(info.state, BackupState::Complete);
-    assert!(!repo.root().join(".state").join(backup_id.to_string()).join("commit.json").exists());
+    assert!(
+        !repo
+            .root()
+            .join(".state")
+            .join(backup_id.to_string())
+            .join("commit.json")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -78,7 +85,14 @@ async fn finalize_refuses_without_all_chunks() {
     assert!(repo.finalize(&backup_id, &commit).await.is_err());
     let info = repo.inspect(&backup_id).await.unwrap();
     assert_ne!(info.state, BackupState::Complete);
-    assert!(!repo.root().join(".state").join(backup_id.to_string()).join("commit.json").exists());
+    assert!(
+        !repo
+            .root()
+            .join(".state")
+            .join(backup_id.to_string())
+            .join("commit.json")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -144,12 +158,13 @@ async fn disk_full_leaves_upload_incomplete() {
     let info = repo.inspect(&backup_id).await.unwrap();
     assert_eq!(info.state, BackupState::Uploading);
     assert_eq!(info.chunks_received, 1);
-    assert!(!dir
-        .path()
-        .join(".state")
-        .join(backup_id.to_string())
-        .join("commit.json")
-        .exists());
+    assert!(
+        !dir.path()
+            .join(".state")
+            .join(backup_id.to_string())
+            .join("commit.json")
+            .exists()
+    );
 }
 
 #[tokio::test]

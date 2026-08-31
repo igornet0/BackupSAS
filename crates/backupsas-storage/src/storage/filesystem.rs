@@ -1,7 +1,7 @@
 use super::BackupStorage;
 use crate::paths;
-use backupsas_core::{BackupSasError, Result};
 use async_trait::async_trait;
+use backupsas_core::{BackupSasError, Result};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -80,12 +80,10 @@ fn collect_keys(current: &Path, root: &Path, out: &mut Vec<String>) -> Result<()
         if path.is_dir() {
             collect_keys(&path, root, out)?;
         } else if path.is_file() {
-            let rel = path
-                .strip_prefix(root)
-                .map_err(|e| BackupSasError::Path {
-                    path: path.clone(),
-                    message: e.to_string(),
-                })?;
+            let rel = path.strip_prefix(root).map_err(|e| BackupSasError::Path {
+                path: path.clone(),
+                message: e.to_string(),
+            })?;
             out.push(rel.to_string_lossy().replace('\\', "/"));
         }
     }

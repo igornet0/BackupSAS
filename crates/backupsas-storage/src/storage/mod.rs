@@ -2,8 +2,8 @@ mod filesystem;
 
 pub use filesystem::FilesystemStorage;
 
-use backupsas_core::Result;
 use async_trait::async_trait;
+use backupsas_core::Result;
 
 /// Low-level object storage. No backup semantics.
 #[async_trait]

@@ -48,26 +48,28 @@ macro_rules! prefixed_id {
 
             fn from_str(s: &str) -> Result<Self> {
                 let rest = s.strip_prefix($prefix).ok_or_else(|| {
-                    BackupSasError::InvalidId(format!(
-                        "expected prefix `{}` in `{s}`",
-                        $prefix
-                    ))
+                    BackupSasError::InvalidId(format!("expected prefix `{}` in `{s}`", $prefix))
                 })?;
-                let ulid = rest.parse::<Ulid>().map_err(|_| {
-                    BackupSasError::InvalidId(format!("invalid ULID in `{s}`"))
-                })?;
+                let ulid = rest
+                    .parse::<Ulid>()
+                    .map_err(|_| BackupSasError::InvalidId(format!("invalid ULID in `{s}`")))?;
                 Ok(Self(ulid))
             }
         }
 
         impl Serialize for $name {
-            fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+            fn serialize<S: Serializer>(
+                &self,
+                serializer: S,
+            ) -> std::result::Result<S::Ok, S::Error> {
                 serializer.serialize_str(&self.to_string())
             }
         }
 
         impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+            fn deserialize<D: Deserializer<'de>>(
+                deserializer: D,
+            ) -> std::result::Result<Self, D::Error> {
                 let s = String::deserialize(deserializer)?;
                 s.parse().map_err(serde::de::Error::custom)
             }

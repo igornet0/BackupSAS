@@ -7,10 +7,9 @@ pub fn hash_bytes(data: &[u8]) -> String {
 }
 
 pub fn parse_hash_bytes(hash: &str) -> Result<[u8; 32]> {
-    let hex = hash
-        .strip_prefix(HASH_PREFIX)
-        .unwrap_or(hash);
-    let bytes = hex::decode(hex).map_err(|e| BackupSasError::InvalidManifest(format!("hash: {e}")))?;
+    let hex = hash.strip_prefix(HASH_PREFIX).unwrap_or(hash);
+    let bytes =
+        hex::decode(hex).map_err(|e| BackupSasError::InvalidManifest(format!("hash: {e}")))?;
     if bytes.len() != 32 {
         return Err(BackupSasError::InvalidManifest(format!(
             "hash must be 32 bytes, got {}",

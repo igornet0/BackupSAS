@@ -3,7 +3,7 @@ use backupsas_core::{BackupSasError, BackupState, DatabaseId, Identity};
 use backupsas_integration::harness::{
     boot_existing_server, boot_fresh_server, client_config, plaintext_three_chunks, repo_root,
 };
-use backupsas_storage::{paths, BackupRecord, StorageRoot};
+use backupsas_storage::{BackupRecord, StorageRoot, paths};
 use std::io::Cursor;
 
 async fn enrolled_client(
@@ -208,8 +208,5 @@ async fn expired_session_info_is_inactive() {
         expires_at: OffsetDateTime::now_utc() - time::Duration::seconds(1),
     };
     assert!(!info.is_active());
-    assert_eq!(
-        info.state(),
-        backupsas_core::SessionState::Expired
-    );
+    assert_eq!(info.state(), backupsas_core::SessionState::Expired);
 }

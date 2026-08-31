@@ -6,7 +6,9 @@ pub const FEATURE_RESUME: u64 = 1 << 0;
 pub const FEATURE_VERIFY: u64 = 1 << 1;
 pub const FEATURE_ENROLL: u64 = 1 << 2;
 pub const FEATURE_SESSION: u64 = 1 << 3;
-pub const FEATURES_V2: u64 = FEATURE_RESUME | FEATURE_VERIFY | FEATURE_ENROLL | FEATURE_SESSION;
+pub const FEATURE_RESTORE: u64 = 1 << 4;
+pub const FEATURES_V2: u64 =
+    FEATURE_RESUME | FEATURE_VERIFY | FEATURE_ENROLL | FEATURE_SESSION | FEATURE_RESTORE;
 pub const FEATURES_V1: u64 = FEATURE_RESUME | FEATURE_VERIFY;
 
 pub type Features = u64;
@@ -45,6 +47,10 @@ const T_ABORT: u8 = 0x3D;
 const T_ABORTED: u8 = 0x3E;
 const T_STATUS: u8 = 0x3F;
 const T_STATUS_RESP: u8 = 0x40;
+const T_OPEN_BACKUP: u8 = 0x41;
+const T_OPEN_BACKUP_OK: u8 = 0x42;
+const T_READ_CHUNK: u8 = 0x43;
+const T_READ_CHUNK_OK: u8 = 0x44;
 const T_ERROR: u8 = 0xFF;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +194,25 @@ pub enum Message {
         next_sequence: u32,
         chunk_count: u32,
     },
+    OpenBackup {
+        session_id: String,
+        backup_id: String,
+    },
+    OpenBackupOk {
+        backup_id: String,
+        manifest_bytes: Vec<u8>,
+        commit_bytes: Vec<u8>,
+    },
+    ReadChunk {
+        session_id: String,
+        backup_id: String,
+        sequence: u32,
+    },
+    ReadChunkOk {
+        backup_id: String,
+        sequence: u32,
+        payload: Vec<u8>,
+    },
     Error {
         reason: String,
     },
@@ -227,6 +252,10 @@ impl Message {
             Self::Aborted { .. } => "ABORTED",
             Self::Status { .. } => "STATUS",
             Self::StatusResp { .. } => "STATUS_RESP",
+            Self::OpenBackup { .. } => "OPEN_BACKUP",
+            Self::OpenBackupOk { .. } => "OPEN_BACKUP_OK",
+            Self::ReadChunk { .. } => "READ_CHUNK",
+            Self::ReadChunkOk { .. } => "READ_CHUNK_OK",
             Self::Error { .. } => "ERROR",
         }
     }
@@ -264,6 +293,10 @@ impl Message {
             Self::Aborted { .. } => T_ABORTED,
             Self::Status { .. } => T_STATUS,
             Self::StatusResp { .. } => T_STATUS_RESP,
+            Self::OpenBackup { .. } => T_OPEN_BACKUP,
+            Self::OpenBackupOk { .. } => T_OPEN_BACKUP_OK,
+            Self::ReadChunk { .. } => T_READ_CHUNK,
+            Self::ReadChunkOk { .. } => T_READ_CHUNK_OK,
             Self::Error { .. } => T_ERROR,
         }
     }
@@ -473,6 +506,40 @@ impl Message {
                 w.write_u32(*next_sequence);
                 w.write_u32(*chunk_count);
             }
+            Self::OpenBackup {
+                session_id,
+                backup_id,
+            } => {
+                w.write_str(session_id);
+                w.write_str(backup_id);
+            }
+            Self::OpenBackupOk {
+                backup_id,
+                manifest_bytes,
+                commit_bytes,
+            } => {
+                w.write_str(backup_id);
+                w.write_bytes(manifest_bytes);
+                w.write_bytes(commit_bytes);
+            }
+            Self::ReadChunk {
+                session_id,
+                backup_id,
+                sequence,
+            } => {
+                w.write_str(session_id);
+                w.write_str(backup_id);
+                w.write_u32(*sequence);
+            }
+            Self::ReadChunkOk {
+                backup_id,
+                sequence,
+                payload,
+            } => {
+                w.write_str(backup_id);
+                w.write_u32(*sequence);
+                w.write_bytes(payload);
+            }
             Self::Error { reason } => w.write_str(reason),
         }
         w.finish()
@@ -637,6 +704,25 @@ impl Message {
                 next_sequence: r.read_u32()?,
                 chunk_count: r.read_u32()?,
             },
+            T_OPEN_BACKUP => Self::OpenBackup {
+                session_id: r.read_string()?,
+                backup_id: r.read_string()?,
+            },
+            T_OPEN_BACKUP_OK => Self::OpenBackupOk {
+                backup_id: r.read_string()?,
+                manifest_bytes: r.read_bytes()?.to_vec(),
+                commit_bytes: r.read_bytes()?.to_vec(),
+            },
+            T_READ_CHUNK => Self::ReadChunk {
+                session_id: r.read_string()?,
+                backup_id: r.read_string()?,
+                sequence: r.read_u32()?,
+            },
+            T_READ_CHUNK_OK => Self::ReadChunkOk {
+                backup_id: r.read_string()?,
+                sequence: r.read_u32()?,
+                payload: r.read_bytes()?.to_vec(),
+            },
             T_ERROR => Self::Error {
                 reason: r.read_string()?,
             },
@@ -719,6 +805,25 @@ mod tests {
             payload: vec![1, 2, 3],
         });
         roundtrip(Message::AuthOk);
+        roundtrip(Message::OpenBackup {
+            session_id: "ses_1".into(),
+            backup_id: "bkp_1".into(),
+        });
+        roundtrip(Message::OpenBackupOk {
+            backup_id: "bkp_1".into(),
+            manifest_bytes: br#"{"format_version":1}"#.to_vec(),
+            commit_bytes: br#"{"format_version":1}"#.to_vec(),
+        });
+        roundtrip(Message::ReadChunk {
+            session_id: "ses_1".into(),
+            backup_id: "bkp_1".into(),
+            sequence: 2,
+        });
+        roundtrip(Message::ReadChunkOk {
+            backup_id: "bkp_1".into(),
+            sequence: 2,
+            payload: vec![9, 9, 9],
+        });
         roundtrip(Message::Error {
             reason: "boom".into(),
         });

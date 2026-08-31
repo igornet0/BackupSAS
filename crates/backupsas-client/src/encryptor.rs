@@ -1,7 +1,7 @@
 use crate::chunker::Chunk;
-use backupsas_core::{hash_bytes, BackupSasError, Result};
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
+use backupsas_core::{BackupSasError, Result, hash_bytes};
 
 pub const NONCE_LEN: usize = 12;
 

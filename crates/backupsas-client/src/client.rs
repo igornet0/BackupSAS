@@ -1,4 +1,4 @@
-use crate::authentication::{authenticate, AuthenticatedSession};
+use crate::authentication::{AuthenticatedSession, authenticate};
 use backupsas_core::{BackupSasConfig, Result};
 
 /// High-level BackupSAS SDK entry point.

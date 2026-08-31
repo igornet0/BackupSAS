@@ -1,6 +1,6 @@
 use crate::error::{BackupSasError, Result};
 use crate::id::ParticipantId;
-use crate::keys::{Fingerprint, PublicKey, SecretKey, SIGNATURE_LEN};
+use crate::keys::{Fingerprint, PublicKey, SIGNATURE_LEN, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -60,7 +60,10 @@ impl Identity {
         let toml = toml_public(&public)?;
         fs::write(dir.join("identity.toml"), toml)?;
         let key_path = dir.join("identity.key");
-        fs::write(key_path.as_path(), hex::encode(self.secret_key.export_bytes()))?;
+        fs::write(
+            key_path.as_path(),
+            hex::encode(self.secret_key.export_bytes()),
+        )?;
         let mut perms = fs::metadata(&key_path)?.permissions();
         perms.set_mode(0o600);
         fs::set_permissions(&key_path, perms)?;

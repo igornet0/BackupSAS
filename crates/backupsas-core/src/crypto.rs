@@ -1,6 +1,6 @@
 use crate::error::{BackupSasError, Result};
 use crate::id::SessionId;
-use crate::keys::{PublicKey, SecretKey, SIGNATURE_LEN};
+use crate::keys::{PublicKey, SIGNATURE_LEN, SecretKey};
 use crate::session::SessionKeys;
 use ed25519_dalek::{Signature, Signer, Verifier};
 use hkdf::Hkdf;

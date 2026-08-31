@@ -1,7 +1,7 @@
 use crate::error::{BackupSasError, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
 use std::fmt;
 use zeroize::ZeroizeOnDrop;
 
@@ -42,7 +42,7 @@ impl PublicKey {
 
     pub fn from_wire(s: &str) -> Result<Self> {
         let rest = s.strip_prefix("ed25519:").ok_or_else(|| {
-            BackupSasError::Auth(format!("expected `ed25519:` prefix in public key"))
+            BackupSasError::Auth("expected `ed25519:` prefix in public key".to_string())
         })?;
         let bytes = hex::decode(rest)
             .map_err(|e| BackupSasError::Auth(format!("invalid public key hex: {e}")))?;

@@ -1,10 +1,8 @@
-use super::filesystem::{CreateUpload, FilesystemBackupRepository, VerifyReport};
 use super::BackupRepository;
+use super::filesystem::{CreateUpload, FilesystemBackupRepository, VerifyReport};
 use crate::session::{BackupMetadata, BackupRecord, UploadSession};
 use async_trait::async_trait;
-use backupsas_core::{
-    BackupId, BackupManifest, ChunkInfo, CommitRecord, Result,
-};
+use backupsas_core::{BackupId, BackupManifest, ChunkInfo, CommitRecord, Result};
 use std::path::{Path, PathBuf};
 
 /// Protocol-facing repository facade. Delegates to `FilesystemBackupRepository`.
@@ -50,7 +48,8 @@ impl FsRepository {
         hash: &str,
         data: &[u8],
     ) -> Result<u32> {
-        self.inner.write_chunk_protocol(backup_id, sequence, hash, data)
+        self.inner
+            .write_chunk_protocol(backup_id, sequence, hash, data)
     }
 
     pub fn verify(&self, backup_id: &BackupId) -> Result<VerifyReport> {
@@ -75,6 +74,24 @@ impl FsRepository {
 
     pub fn list_complete(&self) -> Result<Vec<(PathBuf, BackupMetadata)>> {
         self.inner.list_complete()
+    }
+
+    pub fn read_complete_backup(
+        &self,
+        backup_id: &BackupId,
+        client_id: backupsas_core::ClientId,
+    ) -> Result<(BackupManifest, CommitRecord)> {
+        self.inner.read_complete_backup(backup_id, client_id)
+    }
+
+    pub fn read_complete_chunk(
+        &self,
+        backup_id: &BackupId,
+        client_id: backupsas_core::ClientId,
+        sequence: u32,
+    ) -> Result<Vec<u8>> {
+        self.inner
+            .read_complete_chunk(backup_id, client_id, sequence)
     }
 }
 
@@ -101,10 +118,7 @@ impl BackupRepository for FsRepository {
         BackupRepository::inspect(&self.inner, backup_id).await
     }
 
-    async fn verify(
-        &self,
-        backup_id: &BackupId,
-    ) -> Result<super::VerificationResult> {
+    async fn verify(&self, backup_id: &BackupId) -> Result<super::VerificationResult> {
         BackupRepository::verify(&self.inner, backup_id).await
     }
 

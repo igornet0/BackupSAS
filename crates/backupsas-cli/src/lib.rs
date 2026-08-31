@@ -2,4 +2,4 @@
 
 pub mod verify;
 
-pub use verify::{run_verify, VerifyOptions, VerifyReportLine};
+pub use verify::{VerifyOptions, VerifyReportLine, run_verify};

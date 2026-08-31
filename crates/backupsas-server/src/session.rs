@@ -1,14 +1,12 @@
 use crate::ServerState;
 use backupsas_core::{
-    crypto, envelope::AuthProof, pin_matches, BackupId, BackupSasError, BackupState, ClientId,
-    DatabaseId, EnrollmentRecord, EnrollmentSecret, ParticipantId, PublicKey, Result, SessionId,
-    SessionInfo, TrustedPeer, DEFAULT_REPO_NAME,
+    BackupId, BackupSasError, BackupState, ClientId, DEFAULT_REPO_NAME, DatabaseId,
+    EnrollmentRecord, EnrollmentSecret, ParticipantId, PublicKey, Result, SessionId, SessionInfo,
+    TrustedPeer, crypto, envelope::AuthProof, pin_matches,
 };
-use backupsas_protocol::{
-    read_frame, write_frame, ChunkMismatch, Message, FEATURES_V2,
-};
+use backupsas_protocol::{ChunkMismatch, FEATURES_V2, Message, read_frame, write_frame};
 use backupsas_storage::{BackupRecord, CreateUpload};
-use tokio::io::{split, ReadHalf, WriteHalf};
+use tokio::io::{ReadHalf, WriteHalf, split};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 use tracing::{debug, info};
@@ -468,6 +466,117 @@ async fn handle_ready(
                 .await?;
             }
             Message::SessionClose { .. } => return Ok(()),
+            Message::OpenBackup {
+                session_id: sid,
+                backup_id,
+            } => {
+                require_session(&sid, &session_id)?;
+                let backup_id: BackupId = backup_id.parse()?;
+                let (repo, _) = match state.storage.find_backup(&backup_id) {
+                    Ok(found) => found,
+                    Err(e) => {
+                        write_frame(
+                            writer,
+                            &Message::Error {
+                                reason: e.to_string(),
+                            },
+                        )
+                        .await?;
+                        continue;
+                    }
+                };
+                if !allowed_repos.iter().any(|r| r == repo.name()) {
+                    write_frame(
+                        writer,
+                        &Message::Error {
+                            reason: format!(
+                                "client is not allowed to use repository `{}`",
+                                repo.name()
+                            ),
+                        },
+                    )
+                    .await?;
+                    continue;
+                }
+                match repo.read_complete_backup(&backup_id, client_id) {
+                    Ok((manifest, commit)) => {
+                        write_frame(
+                            writer,
+                            &Message::OpenBackupOk {
+                                backup_id: backup_id.to_string(),
+                                manifest_bytes: manifest.to_vec()?,
+                                commit_bytes: commit.to_vec_pretty()?,
+                            },
+                        )
+                        .await?;
+                    }
+                    Err(e) => {
+                        write_frame(
+                            writer,
+                            &Message::Error {
+                                reason: e.to_string(),
+                            },
+                        )
+                        .await?;
+                    }
+                }
+            }
+            Message::ReadChunk {
+                session_id: sid,
+                backup_id,
+                sequence,
+            } => {
+                require_session(&sid, &session_id)?;
+                let backup_id: BackupId = backup_id.parse()?;
+                let (repo, _) = match state.storage.find_backup(&backup_id) {
+                    Ok(found) => found,
+                    Err(e) => {
+                        write_frame(
+                            writer,
+                            &Message::Error {
+                                reason: e.to_string(),
+                            },
+                        )
+                        .await?;
+                        continue;
+                    }
+                };
+                if !allowed_repos.iter().any(|r| r == repo.name()) {
+                    write_frame(
+                        writer,
+                        &Message::Error {
+                            reason: format!(
+                                "client is not allowed to use repository `{}`",
+                                repo.name()
+                            ),
+                        },
+                    )
+                    .await?;
+                    continue;
+                }
+                match repo.read_complete_chunk(&backup_id, client_id, sequence) {
+                    Ok(payload) => {
+                        write_frame(
+                            writer,
+                            &Message::ReadChunkOk {
+                                backup_id: backup_id.to_string(),
+                                sequence,
+                                payload,
+                            },
+                        )
+                        .await?;
+                    }
+                    Err(e) => {
+                        write_frame(
+                            writer,
+                            &Message::Error {
+                                reason: e.to_string(),
+                            },
+                        )
+                        .await?;
+                    }
+                }
+            }
             other => {
                 write_frame(
                     writer,
@@ -678,10 +787,7 @@ fn to_array64(bytes: &[u8]) -> Result<[u8; 64]> {
         .map_err(|_| BackupSasError::Auth("expected 64-byte signature".into()))
 }
 
-async fn send_error(
-    writer: &mut WriteHalf<TlsStream<TcpStream>>,
-    reason: &str,
-) -> Result<()> {
+async fn send_error(writer: &mut WriteHalf<TlsStream<TcpStream>>, reason: &str) -> Result<()> {
     write_frame(
         writer,
         &Message::Error {

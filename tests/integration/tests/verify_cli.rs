@@ -1,14 +1,16 @@
-use backupsas_cli::verify::{any_invalid, format_all, run_verify, VerifyOptions};
+use backupsas_cli::verify::{VerifyOptions, any_invalid, format_all, run_verify};
 use backupsas_client::BackupSasClient;
 use backupsas_core::{CommitRecord, DatabaseId, Identity};
 use backupsas_integration::harness::{
     boot_fresh_server, client_config, plaintext_three_chunks, repo_root,
 };
 use backupsas_server::load_config;
-use backupsas_storage::{paths, BackupRecord, StorageRoot};
+use backupsas_storage::{BackupRecord, StorageRoot, paths};
 use std::io::Cursor;
 
-async fn complete_backup(data_dir: &std::path::Path) -> (backupsas_core::BackupId, std::path::PathBuf) {
+async fn complete_backup(
+    data_dir: &std::path::Path,
+) -> (backupsas_core::BackupId, std::path::PathBuf) {
     let server = boot_fresh_server(data_dir).await;
     let identity = Identity::generate_client();
     let config = client_config(
@@ -77,7 +79,10 @@ async fn verify_cli_corrupt_chunk_is_invalid() {
     .unwrap();
     let out = format_all(&lines);
     assert!(out.contains("INVALID"), "output:\n{out}");
-    assert!(out.contains("chunk hash mismatch at sequence 1"), "output:\n{out}");
+    assert!(
+        out.contains("chunk hash mismatch at sequence 1"),
+        "output:\n{out}"
+    );
     assert!(any_invalid(&lines));
 }
 

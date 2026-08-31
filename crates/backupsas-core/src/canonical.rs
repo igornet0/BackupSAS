@@ -100,7 +100,8 @@ mod tests {
 
     #[test]
     fn no_whitespace() {
-        let bytes = canonical_bytes(&json!({"chunks":[{"sequence":0,"size":10,"hash":"x"}]})).unwrap();
+        let bytes =
+            canonical_bytes(&json!({"chunks":[{"sequence":0,"size":10,"hash":"x"}]})).unwrap();
         assert!(!bytes.contains(&b' '));
         assert!(!bytes.contains(&b'\n'));
     }

@@ -24,6 +24,7 @@ pub trait RestoreTarget: Send {
 pub struct MemoryRestoreTarget {
     data: Vec<u8>,
     metadata: Option<RestoreMetadata>,
+    finalized: bool,
 }
 
 impl MemoryRestoreTarget {
@@ -31,6 +32,7 @@ impl MemoryRestoreTarget {
         Self {
             data: Vec::new(),
             metadata: None,
+            finalized: false,
         }
     }
 
@@ -38,7 +40,12 @@ impl MemoryRestoreTarget {
         Self {
             data: Vec::with_capacity(capacity),
             metadata: None,
+            finalized: false,
         }
+    }
+
+    pub fn is_finalized(&self) -> bool {
+        self.finalized
     }
 
     pub fn restore_metadata(&self) -> Option<&RestoreMetadata> {
@@ -80,11 +87,13 @@ impl RestoreTarget for MemoryRestoreTarget {
     }
 
     fn finalize(&mut self) -> Result<()> {
-        if let Some(meta) = &self.metadata {
-            if meta.total_size > 0 && self.data.len() as u64 > meta.total_size {
-                self.data.truncate(meta.total_size as usize);
-            }
+        if let Some(meta) = &self.metadata
+            && meta.total_size > 0
+            && self.data.len() as u64 > meta.total_size
+        {
+            self.data.truncate(meta.total_size as usize);
         }
+        self.finalized = true;
         Ok(())
     }
 }

@@ -1,8 +1,6 @@
 use crate::canonical::canonical_bytes;
 use crate::error::{BackupSasError, Result};
-use crate::format::{
-    ChunkInfo, EncryptionInfo, EncryptionScheme, DEFAULT_KEY_ID, FORMAT_VERSION,
-};
+use crate::format::{ChunkInfo, DEFAULT_KEY_ID, EncryptionInfo, EncryptionScheme, FORMAT_VERSION};
 use crate::hash::hash_bytes;
 use crate::id::{BackupId, DatabaseId};
 use crate::merkle::{merkle_root, verify_merkle_root};

@@ -1,10 +1,10 @@
 use backupsas_core::{BackupSasError, Result};
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
-    KeyUsagePurpose, SanType,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
+    SanType,
 };
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::ServerConfig;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::fs;
 use std::io::BufReader;
 use std::net::{IpAddr, Ipv4Addr};
@@ -37,11 +37,9 @@ pub fn generate_dev_certs(data_dir: &Path) -> Result<CertBundle> {
     let ca_key_pem = ca_key.serialize_pem();
 
     let server_key = KeyPair::generate().map_err(rcgen_err)?;
-    let mut server_params = CertificateParams::new(vec![
-        "localhost".to_string(),
-        "backupsas.local".to_string(),
-    ])
-    .map_err(rcgen_err)?;
+    let mut server_params =
+        CertificateParams::new(vec!["localhost".to_string(), "backupsas.local".to_string()])
+            .map_err(rcgen_err)?;
     server_params
         .distinguished_name
         .push(DnType::CommonName, "BackupSAS Transport");

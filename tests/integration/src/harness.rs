@@ -1,10 +1,10 @@
 //! Shared harness for integration tests.
 
 use backupsas_core::{
-    BackupEncryptionKey, BackupSasConfig, EnrollmentSecret, Identity, PublicKey, ServerId,
-    DEFAULT_REPO_NAME,
+    BackupEncryptionKey, BackupSasConfig, DEFAULT_REPO_NAME, EnrollmentSecret, Identity, PublicKey,
+    ServerId,
 };
-use backupsas_server::{bind, init_data_dir, load_config, serve, ServerState};
+use backupsas_server::{ServerState, bind, init_data_dir, load_config, serve};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -12,7 +12,7 @@ use std::time::Duration;
 pub fn plaintext_three_chunks() -> Vec<u8> {
     let mut data = Vec::new();
     for i in 0..3u8 {
-        data.extend(std::iter::repeat(i + 1).take(64 * 1024));
+        data.extend(std::iter::repeat_n(i + 1, 64 * 1024));
     }
     data
 }

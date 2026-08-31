@@ -46,8 +46,8 @@ impl TrustStore {
                 "only client identities can be enrolled".into(),
             ));
         };
-        let text = toml::to_string_pretty(&peer)
-            .map_err(|e| BackupSasError::Serde(e.to_string()))?;
+        let text =
+            toml::to_string_pretty(&peer).map_err(|e| BackupSasError::Serde(e.to_string()))?;
         fs::write(self.dir.join(format!("{id}.toml")), text)?;
         self.peers.insert(id, peer);
         Ok(())

@@ -23,10 +23,7 @@ pub struct MemoryBackupSource {
 
 impl MemoryBackupSource {
     pub fn new(data: Vec<u8>) -> Self {
-        Self {
-            data,
-            label: None,
-        }
+        Self { data, label: None }
     }
 
     pub fn with_label(mut self, label: impl Into<String>) -> Self {

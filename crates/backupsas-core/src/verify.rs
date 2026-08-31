@@ -10,13 +10,32 @@ pub enum VerifyFailure {
     MissingManifest,
     MissingCommit,
     InvalidManifest(String),
-    ChunkHashMismatch { sequence: u32, expected: String, actual: String },
-    RootMismatch { expected: String, actual: String },
-    ManifestHashMismatch { expected: String, actual: String },
+    ChunkHashMismatch {
+        sequence: u32,
+        expected: String,
+        actual: String,
+    },
+    RootMismatch {
+        expected: String,
+        actual: String,
+    },
+    ManifestHashMismatch {
+        expected: String,
+        actual: String,
+    },
     CommitBackupIdMismatch,
-    CommitRootMismatch { expected: String, actual: String },
-    CommitManifestHashMismatch { expected: String, actual: String },
-    IncompleteChunks { expected: u32, received: u32 },
+    CommitRootMismatch {
+        expected: String,
+        actual: String,
+    },
+    CommitManifestHashMismatch {
+        expected: String,
+        actual: String,
+    },
+    IncompleteChunks {
+        expected: u32,
+        received: u32,
+    },
 }
 
 impl fmt::Display for VerifyFailure {
@@ -34,7 +53,10 @@ impl fmt::Display for VerifyFailure {
             Self::CommitRootMismatch { .. } => f.write_str("commit root mismatch"),
             Self::CommitManifestHashMismatch { .. } => f.write_str("commit manifest_hash mismatch"),
             Self::IncompleteChunks { expected, received } => {
-                write!(f, "incomplete chunks: expected {expected}, received {received}")
+                write!(
+                    f,
+                    "incomplete chunks: expected {expected}, received {received}"
+                )
             }
         }
     }
@@ -129,19 +151,15 @@ pub fn verify_backup_dir(backup_dir: &Path) -> VerifyResult {
                 continue;
             }
         };
-        if let Err(e) = verify_hash(&data, &chunk.hash) {
-            if let BackupSasError::ChunkHashMismatch {
+        if let Err(BackupSasError::ChunkHashMismatch {
+            expected, actual, ..
+        }) = verify_hash(&data, &chunk.hash)
+        {
+            result.push(VerifyFailure::ChunkHashMismatch {
+                sequence: chunk.sequence,
                 expected,
                 actual,
-                ..
-            } = e
-            {
-                result.push(VerifyFailure::ChunkHashMismatch {
-                    sequence: chunk.sequence,
-                    expected,
-                    actual,
-                });
-            }
+            });
         }
         if data.len() as u64 != chunk.size {
             let actual = hash_bytes(&data);
@@ -215,14 +233,8 @@ mod tests {
             });
             chunks.push(data);
         }
-        let manifest = BackupManifest::new(
-            backup_id,
-            DatabaseId::new(),
-            16,
-            32,
-            infos,
-            DEFAULT_KEY_ID,
-        );
+        let manifest =
+            BackupManifest::new(backup_id, DatabaseId::new(), 16, 32, infos, DEFAULT_KEY_ID);
         let manifest_bytes = manifest.to_vec().unwrap();
         std::fs::create_dir_all(dir.join("chunks")).unwrap();
         std::fs::write(dir.join("manifest.json"), &manifest_bytes).unwrap();
@@ -235,11 +247,7 @@ mod tests {
             manifest.manifest_hash.clone(),
             OffsetDateTime::now_utc(),
         );
-        std::fs::write(
-            dir.join("commit.json"),
-            commit.to_vec_pretty().unwrap(),
-        )
-        .unwrap();
+        std::fs::write(dir.join("commit.json"), commit.to_vec_pretty().unwrap()).unwrap();
         (backup_id, manifest_bytes, chunks[1].clone())
     }
 
@@ -258,10 +266,12 @@ mod tests {
         std::fs::write(dir.path().join("chunks").join("000001"), b"bad").unwrap();
         let result = verify_backup_dir(dir.path());
         assert!(!result.valid);
-        assert!(result
-            .failures
-            .iter()
-            .any(|f| matches!(f, VerifyFailure::ChunkHashMismatch { sequence: 1, .. })));
+        assert!(
+            result
+                .failures
+                .iter()
+                .any(|f| matches!(f, VerifyFailure::ChunkHashMismatch { sequence: 1, .. }))
+        );
     }
 
     #[test]
@@ -276,10 +286,12 @@ mod tests {
         let _ = backup_id;
         let result = verify_backup_dir(dir.path());
         assert!(!result.valid);
-        assert!(result
-            .failures
-            .iter()
-            .any(|f| matches!(f, VerifyFailure::CommitRootMismatch { .. })));
+        assert!(
+            result
+                .failures
+                .iter()
+                .any(|f| matches!(f, VerifyFailure::CommitRootMismatch { .. }))
+        );
     }
 
     #[test]
@@ -289,9 +301,11 @@ mod tests {
         std::fs::remove_file(dir.path().join("commit.json")).unwrap();
         let result = verify_backup_dir(dir.path());
         assert!(!result.valid);
-        assert!(result
-            .failures
-            .iter()
-            .any(|f| matches!(f, VerifyFailure::MissingCommit)));
+        assert!(
+            result
+                .failures
+                .iter()
+                .any(|f| matches!(f, VerifyFailure::MissingCommit))
+        );
     }
 }

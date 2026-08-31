@@ -1,16 +1,19 @@
 use anyhow::{Context, Result};
-use backupsas_core::{BackupId, ClientId, Identity, DEFAULT_LISTEN};
-use backupsas_cli::verify::{any_invalid, format_all, run_verify, VerifyOptions};
+use backupsas_cli::verify::{VerifyOptions, any_invalid, format_all, run_verify};
+use backupsas_core::{BackupId, ClientId, DEFAULT_LISTEN, Identity};
 use backupsas_server::tls;
 use backupsas_server::trust::TrustStore;
-use backupsas_server::{init_data_dir, load_config, run, ServerState};
+use backupsas_server::{ServerState, init_data_dir, load_config, run};
 use backupsas_storage::{BackupRecord, StorageRoot};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "backupsas", about = "BackupSAS storage daemon and identity SDK")]
+#[command(
+    name = "backupsas",
+    about = "BackupSAS storage daemon and identity SDK"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

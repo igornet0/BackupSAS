@@ -9,10 +9,8 @@ mod failure;
 pub use filesystem::{CreateUpload, FilesystemBackupRepository, VerifyReport};
 pub use legacy::FsRepository;
 
-use backupsas_core::{
-    BackupId, BackupManifest, ChunkInfo, CommitRecord, Result,
-};
 use async_trait::async_trait;
+use backupsas_core::{BackupId, BackupManifest, ChunkInfo, CommitRecord, Result};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -44,12 +42,8 @@ impl From<VerificationResult> for VerifyReport {
 #[async_trait]
 pub trait BackupRepository: Send + Sync {
     async fn create(&self, manifest: &BackupManifest) -> Result<BackupId>;
-    async fn write_chunk(
-        &self,
-        backup_id: &BackupId,
-        chunk: &ChunkInfo,
-        data: &[u8],
-    ) -> Result<()>;
+    async fn write_chunk(&self, backup_id: &BackupId, chunk: &ChunkInfo, data: &[u8])
+    -> Result<()>;
     async fn finalize(&self, backup_id: &BackupId, commit: &CommitRecord) -> Result<()>;
     async fn inspect(&self, backup_id: &BackupId) -> Result<BackupInfo>;
     async fn verify(&self, backup_id: &BackupId) -> Result<VerificationResult>;

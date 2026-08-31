@@ -1,9 +1,9 @@
 use backupsas_client::BackupSasClient;
 use backupsas_core::{
-    BackupEncryptionKey, BackupSasConfig, BackupSasError, Identity, PublicKey, SecretKey,
-    DEFAULT_REPO_NAME,
+    BackupEncryptionKey, BackupSasConfig, BackupSasError, DEFAULT_REPO_NAME, Identity, PublicKey,
+    SecretKey,
 };
-use backupsas_server::{bind, init_data_dir, serve, ServerState};
+use backupsas_server::{ServerState, bind, init_data_dir, serve};
 use std::time::Duration;
 
 #[tokio::test]

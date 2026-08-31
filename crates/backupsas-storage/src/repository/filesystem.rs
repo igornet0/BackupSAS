@@ -5,8 +5,8 @@ use crate::session::{BackupMetadata, BackupRecord, UploadSession};
 use crate::storage::FilesystemStorage;
 use async_trait::async_trait;
 use backupsas_core::{
-    hash_bytes, verify_backup_dir, BackupId, BackupManifest, BackupSasError, BackupState,
-    ChunkInfo, ClientId, CommitRecord, DatabaseId, Result, VerifyResult,
+    BackupId, BackupManifest, BackupSasError, BackupState, ChunkInfo, ClientId, CommitRecord,
+    DatabaseId, Result, VerifyResult, hash_bytes, verify_backup_dir,
 };
 use fd_lock::RwLock;
 use std::fs::{self, File, OpenOptions};
@@ -226,7 +226,10 @@ impl FilesystemBackupRepository {
             let meta_path = path.join("metadata.json");
             let bytes = fs::read(&meta_path)?;
             let meta: BackupMetadata = serde_json::from_slice(&bytes)?;
-            return Ok(BackupRecord::Complete { path, metadata: meta });
+            return Ok(BackupRecord::Complete {
+                path,
+                metadata: meta,
+            });
         }
         Err(BackupSasError::BackupNotFound(backup_id.to_string()))
     }
@@ -269,13 +272,87 @@ impl FilesystemBackupRepository {
             let rel = fs::read_to_string(entry.path())?;
             let path = self.root().join(rel.trim());
             let meta_path = path.join("metadata.json");
-            if let Ok(bytes) = fs::read(&meta_path) {
-                if let Ok(meta) = serde_json::from_slice::<BackupMetadata>(&bytes) {
-                    out.push((path, meta));
-                }
+            if let Ok(bytes) = fs::read(&meta_path)
+                && let Ok(meta) = serde_json::from_slice::<BackupMetadata>(&bytes)
+            {
+                out.push((path, meta));
             }
         }
         Ok(out)
+    }
+
+    /// Load trusted manifest + commit for a complete backup. Checks client ownership via metadata.
+    pub fn read_complete_backup(
+        &self,
+        backup_id: &BackupId,
+        client_id: ClientId,
+    ) -> Result<(BackupManifest, CommitRecord)> {
+        let backup_dir = self
+            .index_path(backup_id)
+            .ok_or_else(|| BackupSasError::BackupNotFound(backup_id.to_string()))?;
+        let commit_path = paths::backup_commit(&backup_dir);
+        if !commit_path.exists() {
+            return Err(BackupSasError::InvalidState {
+                id: backup_id.to_string(),
+                actual: BackupState::Uploading,
+                expected: BackupState::Complete,
+            });
+        }
+        let meta_path = backup_dir.join("metadata.json");
+        if meta_path.exists() {
+            let meta: BackupMetadata = serde_json::from_slice(&fs::read(&meta_path)?)?;
+            if meta.client_id != client_id {
+                return Err(BackupSasError::Auth(
+                    "client not authorized for this backup".into(),
+                ));
+            }
+        }
+        let manifest = BackupManifest::from_slice(&fs::read(backup_dir.join("manifest.json"))?)?;
+        let commit = CommitRecord::from_slice(&fs::read(&commit_path)?)?;
+        if manifest.backup_id != *backup_id {
+            return Err(BackupSasError::InvalidManifest(
+                "manifest backup_id mismatch".into(),
+            ));
+        }
+        commit.verify_against_manifest(&manifest)?;
+        Ok((manifest, commit))
+    }
+
+    /// Read one ciphertext chunk from a complete backup (authorized by client_id).
+    pub fn read_complete_chunk(
+        &self,
+        backup_id: &BackupId,
+        client_id: ClientId,
+        sequence: u32,
+    ) -> Result<Vec<u8>> {
+        let backup_dir = self
+            .index_path(backup_id)
+            .ok_or_else(|| BackupSasError::BackupNotFound(backup_id.to_string()))?;
+        if !paths::backup_commit(&backup_dir).exists() {
+            return Err(BackupSasError::InvalidState {
+                id: backup_id.to_string(),
+                actual: BackupState::Uploading,
+                expected: BackupState::Complete,
+            });
+        }
+        let meta_path = backup_dir.join("metadata.json");
+        if meta_path.exists() {
+            let meta: BackupMetadata = serde_json::from_slice(&fs::read(&meta_path)?)?;
+            if meta.client_id != client_id {
+                return Err(BackupSasError::Auth(
+                    "client not authorized for this backup".into(),
+                ));
+            }
+        }
+        let manifest = BackupManifest::from_slice(&fs::read(backup_dir.join("manifest.json"))?)?;
+        if sequence >= manifest.chunk_count() {
+            return Err(BackupSasError::ChunkSequence {
+                expected: sequence,
+                got: manifest.chunk_count(),
+            });
+        }
+        let chunk_path = backup_dir.join("chunks").join(paths::chunk_name(sequence));
+        fs::read(&chunk_path).map_err(Into::into)
     }
 
     // --- BackupRepository implementation (sync core) ---
@@ -310,12 +387,7 @@ impl FilesystemBackupRepository {
         Ok(backup_id)
     }
 
-    fn write_chunk_sync(
-        &self,
-        backup_id: &BackupId,
-        chunk: &ChunkInfo,
-        data: &[u8],
-    ) -> Result<()> {
+    fn write_chunk_sync(&self, backup_id: &BackupId, chunk: &ChunkInfo, data: &[u8]) -> Result<()> {
         self.write_chunk_protocol(backup_id, chunk.sequence, &chunk.hash, data)?;
         Ok(())
     }
@@ -361,10 +433,10 @@ impl FilesystemBackupRepository {
         }
 
         for chunk in &manifest.chunks {
-            let data = self
-                .storage_read_blocking(&keys::staging_chunk(backup_id, chunk.sequence))?;
+            let data =
+                self.storage_read_blocking(&keys::staging_chunk(backup_id, chunk.sequence))?;
             let actual = hash_bytes(&data);
-            if &actual != &chunk.hash {
+            if actual != chunk.hash {
                 mismatches.push((chunk.sequence, chunk.hash.clone(), actual));
             }
         }
@@ -673,7 +745,8 @@ mod tests {
 
     fn temp_repo() -> (tempfile::TempDir, FilesystemBackupRepository) {
         let dir = tempfile::tempdir().unwrap();
-        let repo = FilesystemBackupRepository::open(dir.path().to_path_buf(), "avrora-prod").unwrap();
+        let repo =
+            FilesystemBackupRepository::open(dir.path().to_path_buf(), "avrora-prod").unwrap();
         (dir, repo)
     }
 
@@ -711,8 +784,14 @@ mod tests {
         })
         .unwrap();
 
-        let manifest =
-            BackupManifest::new(backup_id, database_id, 32, total, chunk_infos, DEFAULT_KEY_ID);
+        let manifest = BackupManifest::new(
+            backup_id,
+            database_id,
+            32,
+            total,
+            chunk_infos,
+            DEFAULT_KEY_ID,
+        );
         repo.store_manifest(&backup_id, &manifest.to_vec().unwrap())
             .unwrap();
 
@@ -753,11 +832,18 @@ mod tests {
         })
         .unwrap();
         let hash0 = chunk_infos[0].hash.clone();
-        let manifest =
-            BackupManifest::new(backup_id, DatabaseId::new(), 16, total, chunk_infos, DEFAULT_KEY_ID);
+        let manifest = BackupManifest::new(
+            backup_id,
+            DatabaseId::new(),
+            16,
+            total,
+            chunk_infos,
+            DEFAULT_KEY_ID,
+        );
         repo.store_manifest(&backup_id, &manifest.to_vec().unwrap())
             .unwrap();
-        repo.write_chunk_protocol(&backup_id, 0, &hash0, &chunks[0]).unwrap();
+        repo.write_chunk_protocol(&backup_id, 0, &hash0, &chunks[0])
+            .unwrap();
 
         let session = repo.resume(&backup_id).unwrap();
         assert_eq!(session.next_sequence, 1);

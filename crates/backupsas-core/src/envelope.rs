@@ -31,7 +31,9 @@ impl AuthProof {
 
     pub fn verify(&self, public: &PublicKey, participant_id: &str, nonce: &[u8]) -> Result<()> {
         if !timestamp_is_fresh(self.timestamp) {
-            return Err(BackupSasError::Auth("proof timestamp outside clock window".into()));
+            return Err(BackupSasError::Auth(
+                "proof timestamp outside clock window".into(),
+            ));
         }
         let message = proof_message(nonce, participant_id, self.timestamp);
         verify(public, &message, &self.signature)

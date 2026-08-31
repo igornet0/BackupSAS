@@ -6,8 +6,8 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
 
 pub fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();

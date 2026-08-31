@@ -82,4 +82,27 @@ impl CommitRecord {
         record.validate_version()?;
         Ok(record)
     }
+
+    pub fn verify_against_manifest(
+        &self,
+        manifest: &crate::manifest::BackupManifest,
+    ) -> Result<()> {
+        self.validate_version()?;
+        if self.backup_id != manifest.backup_id {
+            return Err(BackupSasError::InvalidManifest(
+                "commit backup_id mismatch".into(),
+            ));
+        }
+        if self.root_hash != manifest.root_hash {
+            return Err(BackupSasError::InvalidManifest(
+                "commit root_hash mismatch".into(),
+            ));
+        }
+        if self.manifest_hash != manifest.manifest_hash {
+            return Err(BackupSasError::InvalidManifest(
+                "commit manifest_hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
 }

@@ -4,9 +4,7 @@ pub mod session;
 pub mod tls;
 pub mod trust;
 
-use backupsas_core::{
-    EnrollmentRecord, EnrollmentSecret, Identity, Result, ServerConfig,
-};
+use backupsas_core::{EnrollmentRecord, EnrollmentSecret, Identity, Result, ServerConfig};
 use backupsas_storage::StorageRoot;
 use rustls::ServerConfig as TlsServerConfig;
 use std::net::SocketAddr;
@@ -88,9 +86,10 @@ async fn handle_connection(
     acceptor: TlsAcceptor,
     state: ServerState,
 ) -> Result<()> {
-    let tls = acceptor.accept(stream).await.map_err(|e| {
-        backupsas_core::BackupSasError::Tls(format!("handshake with {peer}: {e}"))
-    })?;
+    let tls = acceptor
+        .accept(stream)
+        .await
+        .map_err(|e| backupsas_core::BackupSasError::Tls(format!("handshake with {peer}: {e}")))?;
     session::run_session(tls, state).await
 }
 
@@ -107,8 +106,7 @@ pub fn init_data_dir(data_dir: &Path, listen: &str) -> Result<InitResult> {
     identity.save(&data_dir.join("identity"))?;
 
     let enrollment_secret = EnrollmentSecret::generate();
-    EnrollmentRecord::from_secret(&enrollment_secret)
-        .save(&data_dir.join("enrollment.secret"))?;
+    EnrollmentRecord::from_secret(&enrollment_secret).save(&data_dir.join("enrollment.secret"))?;
 
     let backupsas_core::ParticipantId::Server(server_id) = identity.id else {
         return Err(backupsas_core::BackupSasError::Other(
@@ -132,8 +130,8 @@ pub fn init_data_dir(data_dir: &Path, listen: &str) -> Result<InitResult> {
 pub fn load_config(data_dir: &Path) -> Result<ServerConfig> {
     let path = data_dir.join("server.toml");
     let text = std::fs::read_to_string(&path)?;
-    let mut config: ServerConfig = toml::from_str(&text)
-        .map_err(|e| backupsas_core::BackupSasError::Serde(e.to_string()))?;
+    let mut config: ServerConfig =
+        toml::from_str(&text).map_err(|e| backupsas_core::BackupSasError::Serde(e.to_string()))?;
     config.data_dir = data_dir.to_path_buf();
     Ok(config)
 }

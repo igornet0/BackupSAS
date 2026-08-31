@@ -1,8 +1,8 @@
 use backupsas_client::BackupSasClient;
 use backupsas_core::{
-    BackupEncryptionKey, BackupSasConfig, BackupState, DatabaseId, Identity, DEFAULT_REPO_NAME,
+    BackupEncryptionKey, BackupSasConfig, BackupState, DEFAULT_REPO_NAME, DatabaseId, Identity,
 };
-use backupsas_server::{bind, init_data_dir, load_config, serve, ServerState};
+use backupsas_server::{ServerState, bind, init_data_dir, load_config, serve};
 use backupsas_storage::{BackupRecord, StorageRoot};
 use std::io::Cursor;
 use std::time::Duration;
@@ -10,7 +10,7 @@ use std::time::Duration;
 fn plaintext() -> Vec<u8> {
     let mut data = Vec::new();
     for i in 0..3u8 {
-        data.extend(std::iter::repeat(i + 1).take(64 * 1024));
+        data.extend(std::iter::repeat_n(i + 1, 64 * 1024));
     }
     data
 }
@@ -93,14 +93,7 @@ async fn resume_after_partial_upload() {
     let data_dir = tmp.path();
     let (addr, server_id, server_pk, secret) = start_server(data_dir).await;
     let identity = Identity::generate_client();
-    let config = client_config(
-        addr,
-        data_dir,
-        server_id,
-        server_pk,
-        Some(secret),
-        identity,
-    );
+    let config = client_config(addr, data_dir, server_id, server_pk, Some(secret), identity);
     let client = BackupSasClient::connect(config).await.unwrap();
     let mut session = client.authenticate().await.unwrap();
     let mut backup = session

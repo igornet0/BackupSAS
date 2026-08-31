@@ -1,10 +1,10 @@
 use crate::authentication::AuthenticatedSession;
-use crate::chunker::{chunk_reader, Chunk};
+use crate::chunker::{Chunk, chunk_reader};
 use crate::encryptor::{Aes256GcmEncryptor, EncryptedChunk};
 use crate::source::BackupSource;
 use backupsas_core::{
-    BackupId, BackupManifest, BackupSasConfig, BackupSasError, ChunkInfo, DatabaseId,
-    DEFAULT_KEY_ID, Result,
+    BackupId, BackupManifest, BackupSasConfig, BackupSasError, ChunkInfo, DEFAULT_KEY_ID,
+    DatabaseId, Result,
 };
 use backupsas_protocol::Message;
 use std::io::Read;
@@ -16,7 +16,7 @@ pub struct UploadOutcome {
     pub chunks_sent: u32,
 }
 
-pub struct BackupHandle<'a> {
+pub struct UploadHandle<'a> {
     session: &'a mut AuthenticatedSession,
     repository: String,
     pub manifest: BackupManifest,
@@ -25,7 +25,7 @@ pub struct BackupHandle<'a> {
     has_manifest: bool,
 }
 
-impl<'a> BackupHandle<'a> {
+impl<'a> UploadHandle<'a> {
     pub async fn upload(&mut self) -> Result<u32> {
         self.upload_n(u32::MAX).await
     }
@@ -141,9 +141,10 @@ impl AuthenticatedSession {
         config: &BackupSasConfig,
         database_id: DatabaseId,
         reader: R,
-    ) -> Result<BackupHandle<'_>> {
+    ) -> Result<UploadHandle<'_>> {
         let chunks = chunk_reader(reader, config.chunk_size as usize)?;
-        self.create_backup_from_chunks(config, database_id, chunks).await
+        self.create_backup_from_chunks(config, database_id, chunks)
+            .await
     }
 
     pub async fn create_backup_from_source(
@@ -151,7 +152,7 @@ impl AuthenticatedSession {
         config: &BackupSasConfig,
         database_id: DatabaseId,
         source: &mut dyn BackupSource,
-    ) -> Result<BackupHandle<'_>> {
+    ) -> Result<UploadHandle<'_>> {
         let total = source.total_size();
         let chunk_size = config.chunk_size as usize;
         let mut chunks = Vec::new();
@@ -168,7 +169,8 @@ impl AuthenticatedSession {
             offset += len as u64;
             sequence += 1;
         }
-        self.create_backup_from_chunks(config, database_id, chunks).await
+        self.create_backup_from_chunks(config, database_id, chunks)
+            .await
     }
 
     async fn create_backup_from_chunks(
@@ -176,7 +178,7 @@ impl AuthenticatedSession {
         config: &BackupSasConfig,
         database_id: DatabaseId,
         chunks: Vec<Chunk>,
-    ) -> Result<BackupHandle<'_>> {
+    ) -> Result<UploadHandle<'_>> {
         let encryptor = Aes256GcmEncryptor::new(*config.backup_encryption_key.as_bytes());
         let encrypted = encryptor.encrypt_chunks(&chunks)?;
         let chunk_infos: Vec<ChunkInfo> = encrypted
@@ -206,7 +208,7 @@ impl AuthenticatedSession {
         database_id: DatabaseId,
         manifest: BackupManifest,
         chunks: Vec<EncryptedChunk>,
-    ) -> Result<BackupHandle<'_>> {
+    ) -> Result<UploadHandle<'_>> {
         self.open_upload(config, database_id, manifest, chunks, true)
             .await
     }
@@ -218,7 +220,7 @@ impl AuthenticatedSession {
         manifest: BackupManifest,
         chunks: Vec<EncryptedChunk>,
         use_resume: bool,
-    ) -> Result<BackupHandle<'_>> {
+    ) -> Result<UploadHandle<'_>> {
         let (resume_from, has_manifest) = if use_resume {
             self.conn
                 .send(&Message::Resume {
@@ -268,7 +270,7 @@ impl AuthenticatedSession {
             }
         };
 
-        Ok(BackupHandle {
+        Ok(UploadHandle {
             session: self,
             repository: config.repository.clone(),
             manifest,
@@ -279,10 +281,7 @@ impl AuthenticatedSession {
     }
 }
 
-async fn expect<F>(
-    conn: &mut crate::connection::Connection,
-    pred: F,
-) -> Result<Message>
+async fn expect<F>(conn: &mut crate::connection::Connection, pred: F) -> Result<Message>
 where
     F: FnOnce(&Message) -> bool,
 {
@@ -300,7 +299,7 @@ where
     }
 }
 
-impl BackupHandle<'_> {
+impl UploadHandle<'_> {
     pub fn chunks(&self) -> &[EncryptedChunk] {
         &self.chunks
     }

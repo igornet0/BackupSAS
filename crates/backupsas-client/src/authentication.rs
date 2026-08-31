@@ -1,7 +1,7 @@
 use crate::connection::Connection;
 use backupsas_core::{
-    crypto, envelope::AuthProof, pin_matches, BackupSasConfig, BackupSasError, PublicKey, Result,
-    SessionId, SessionInfo,
+    BackupSasConfig, BackupSasError, PublicKey, Result, SessionId, SessionInfo, crypto,
+    envelope::AuthProof, pin_matches,
 };
 use backupsas_protocol::{Message, PROTOCOL_VERSION};
 
@@ -69,7 +69,9 @@ pub async fn authenticate(config: &BackupSasConfig) -> Result<AuthenticatedSessi
         })
         .await?;
         match conn.recv().await? {
-            Message::EnrollChallenge { nonce: enroll_nonce } => {
+            Message::EnrollChallenge {
+                nonce: enroll_nonce,
+            } => {
                 let bootstrap_proof = secret.proof(&enroll_nonce);
                 let mut signed = Vec::new();
                 signed.extend_from_slice(&enroll_nonce);
