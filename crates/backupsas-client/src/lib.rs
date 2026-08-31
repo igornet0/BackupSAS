@@ -6,6 +6,7 @@ mod chunker;
 mod connection;
 mod encryptor;
 mod source;
+mod target;
 mod tls;
 
 pub mod client;
@@ -16,4 +17,5 @@ pub use chunker::{chunk_reader, Chunk, ChunkIter};
 pub use client::BackupSasClient;
 pub use encryptor::{Aes256GcmEncryptor, ChunkEncryptor, EncryptedChunk};
 pub use source::{BackupSource, BackupSourceMetadata, MemoryBackupSource};
+pub use target::{MemoryRestoreTarget, RestoreMetadata, RestoreTarget};
 pub use tls::load_client_tls;
