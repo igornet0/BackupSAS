@@ -1,0 +1,21 @@
+[package]
+name = "backupsas-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Filesystem-backed immutable backup repository"
+
+[dependencies]
+async-trait = "0.1"
+backupsas-core.workspace = true
+blake3.workspace = true
+fd-lock.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

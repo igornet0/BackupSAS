@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/backupsas-core",
+    "crates/backupsas-protocol",
+    "crates/backupsas-storage",
+    "crates/backupsas-server",
+    "crates/backupsas-client",
+    "crates/backupsas-cli",
+    "tests/integration",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+backupsas-core = { path = "crates/backupsas-core" }
+backupsas-protocol = { path = "crates/backupsas-protocol" }
+backupsas-storage = { path = "crates/backupsas-storage" }
+backupsas-server = { path = "crates/backupsas-server" }
+backupsas-client = { path = "crates/backupsas-client" }
+
+aes-gcm = "0.10"
+anyhow = "1"
+blake3 = "1"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+constant_time_eq = "0.3"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+fd-lock = "4"
+hex = "0.4"
+hkdf = "0.12"
+rand = "0.8"
+rcgen = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+rustls-pemfile = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "macros", "parsing", "serde", "std"] }
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ulid = { version = "1", features = ["std"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }

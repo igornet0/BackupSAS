@@ -1,0 +1,25 @@
+[package]
+name = "backupsas-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared types, identity, crypto, and errors for BackupSAS"
+
+[dependencies]
+blake3.workspace = true
+constant_time_eq.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+itoa = "1"
+hkdf.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+time.workspace = true
+ulid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

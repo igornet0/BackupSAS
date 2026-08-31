@@ -1,0 +1,20 @@
+[package]
+name = "backupsas-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "BackupSAS upload client (chunker, encryptor, resumable push)"
+
+[dependencies]
+aes-gcm.workspace = true
+backupsas-core.workspace = true
+backupsas-protocol.workspace = true
+blake3.workspace = true
+hex.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
