@@ -101,6 +101,20 @@ impl BackupHandle<'_> {
         config: &BackupSasConfig,
         target: &mut dyn RestoreTarget,
     ) -> Result<()> {
+        match self.restore_to_inner(config, target).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = target.abort();
+                Err(e)
+            }
+        }
+    }
+
+    async fn restore_to_inner(
+        &mut self,
+        config: &BackupSasConfig,
+        target: &mut dyn RestoreTarget,
+    ) -> Result<()> {
         self.manifest.validate()?;
         self.commit.verify_against_manifest(&self.manifest)?;
 

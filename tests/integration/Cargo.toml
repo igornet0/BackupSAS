@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+backupsas-client.workspace = true
 backupsas-core.workspace = true
 backupsas-server.workspace = true
 backupsas-storage.workspace = true

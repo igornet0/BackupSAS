@@ -19,5 +19,5 @@ pub use client::BackupSasClient;
 pub use encryptor::{Aes256GcmEncryptor, ChunkEncryptor, EncryptedChunk};
 pub use restore::BackupHandle;
 pub use source::{BackupSource, BackupSourceMetadata, MemoryBackupSource};
-pub use target::{MemoryRestoreTarget, RestoreMetadata, RestoreTarget};
+pub use target::{FileRestoreTarget, MemoryRestoreTarget, RestoreMetadata, RestoreTarget};
 pub use tls::load_client_tls;

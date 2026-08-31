@@ -1,13 +1,17 @@
 //! Shared harness for integration tests.
 
 use backupsas_core::{
-    BackupEncryptionKey, BackupSasConfig, DEFAULT_REPO_NAME, EnrollmentSecret, Identity, PublicKey,
-    ServerId,
+    BackupEncryptionKey, BackupId, BackupSasConfig, DEFAULT_REPO_NAME, DatabaseId,
+    EnrollmentSecret, Identity, PublicKey, ServerId,
 };
 use backupsas_server::{ServerState, bind, init_data_dir, load_config, serve};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+pub fn random_bytes(n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i % 251) as u8).collect()
+}
 
 pub fn plaintext_three_chunks() -> Vec<u8> {
     let mut data = Vec::new();
@@ -98,4 +102,53 @@ pub fn client_config(
 
 pub fn repo_root(data_dir: &Path) -> PathBuf {
     backupsas_storage::repo_root(data_dir, DEFAULT_REPO_NAME)
+}
+
+pub fn restore_client_config(
+    addr: SocketAddr,
+    data_dir: &Path,
+    server: &ServerHandle,
+) -> BackupSasConfig {
+    let identity = Identity::load(&data_dir.join("client-identity")).unwrap();
+    client_config(
+        addr,
+        data_dir,
+        server.server_id,
+        server.public_key,
+        None,
+        identity,
+    )
+}
+
+pub async fn upload_memory_source(data_dir: &Path, source_data: Vec<u8>) -> (BackupId, PathBuf) {
+    let server = boot_fresh_server(data_dir).await;
+    let identity = Identity::generate_client();
+    identity.save(&data_dir.join("client-identity")).unwrap();
+    let config = client_config(
+        server.addr,
+        data_dir,
+        server.server_id,
+        server.public_key,
+        server.enrollment_secret,
+        identity,
+    );
+    let client = backupsas_client::BackupSasClient::connect(config)
+        .await
+        .unwrap();
+    let mut session = client.authenticate().await.unwrap();
+    let mut source = backupsas_client::MemoryBackupSource::new(source_data);
+    let mut backup = session
+        .create_backup_from_source(client.config(), DatabaseId::new(), &mut source)
+        .await
+        .unwrap();
+    backup.upload().await.unwrap();
+    let outcome = backup.commit().await.unwrap();
+
+    let storage = backupsas_storage::StorageRoot::open(&load_config(data_dir).unwrap()).unwrap();
+    let (_, record) = storage.find_backup(&outcome.backup_id).unwrap();
+    let path = match record {
+        backupsas_storage::BackupRecord::Complete { path, .. } => path,
+        _ => panic!("expected complete backup"),
+    };
+    (outcome.backup_id, path)
 }
