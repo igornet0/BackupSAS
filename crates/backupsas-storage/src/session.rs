@@ -18,9 +18,17 @@ pub struct UploadSession {
     pub next_sequence: u32,
     pub has_manifest: bool,
     pub verified: bool,
+    /// Last time the session was written (manifest, chunk, verify…). Older
+    /// session files lack it; `created_at` is used instead.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub last_activity: Option<OffsetDateTime>,
 }
 
 impl UploadSession {
+    pub fn last_activity_or_created(&self) -> OffsetDateTime {
+        self.last_activity.unwrap_or(self.created_at)
+    }
+
     pub fn last_verified_chunk(&self) -> u32 {
         self.next_sequence.saturating_sub(1)
     }

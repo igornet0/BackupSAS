@@ -3,6 +3,7 @@
 pub mod canonical;
 pub mod config;
 pub mod crypto;
+pub mod descriptor;
 pub mod enrollment;
 pub mod envelope;
 pub mod error;
@@ -13,15 +14,17 @@ pub mod identity;
 pub mod keys;
 pub mod manifest;
 pub mod merkle;
+pub mod relocation;
 pub mod session;
 pub mod state;
 pub mod trust;
 pub mod verify;
 
 pub use config::{
-    BackupSasConfig, DEFAULT_CHUNK_SIZE, DEFAULT_LISTEN, DEFAULT_REPO_NAME, RepositoryConfig,
-    ServerConfig,
+    BackupSasConfig, DEFAULT_CHUNK_SIZE, DEFAULT_LISTEN, DEFAULT_REPO_NAME,
+    DEFAULT_STALE_UPLOAD_TTL_SECS, RepositoryConfig, ServerConfig,
 };
+pub use descriptor::{ConnectDescriptor, DESCRIPTOR_FORMAT};
 pub use enrollment::{EnrollmentRecord, EnrollmentSecret};
 pub use envelope::{AuthProof, Challenge};
 pub use error::{BackupSasError, Result};
@@ -33,7 +36,8 @@ pub use id::{BackupId, ClientId, DatabaseId, ParticipantId, RepositoryId, Server
 pub use identity::Identity;
 pub use keys::{BackupEncryptionKey, Fingerprint, PublicKey, SecretKey};
 pub use manifest::BackupManifest;
+pub use relocation::{RelocationNotice, RemoteBackupInfo, TransferMode};
 pub use session::{SessionInfo, SessionKeys, SessionState};
 pub use state::BackupState;
-pub use trust::{TrustedPeer, pin_matches};
+pub use trust::{PeerKind, TrustedPeer, pin_matches};
 pub use verify::{VerifyFailure, VerifyResult, verify_backup_dir};

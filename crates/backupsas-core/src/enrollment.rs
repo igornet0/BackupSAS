@@ -3,6 +3,7 @@ use crate::error::{BackupSasError, Result};
 use crate::hash::hash_bytes;
 use crate::id::ClientId;
 use crate::keys::PublicKey;
+use crate::trust::PeerKind;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -56,13 +57,22 @@ impl std::fmt::Debug for EnrollmentSecret {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrollmentRecord {
     pub secret_hash: String,
+    /// Role granted to whoever enrolls with this secret.
+    #[serde(default)]
+    pub kind: PeerKind,
 }
 
 impl EnrollmentRecord {
     pub fn from_secret(secret: &EnrollmentSecret) -> Self {
         Self {
             secret_hash: secret.hash(),
+            kind: PeerKind::Database,
         }
+    }
+
+    pub fn with_kind(mut self, kind: PeerKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     pub fn matches(&self, secret: &EnrollmentSecret) -> bool {
@@ -70,7 +80,11 @@ impl EnrollmentRecord {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        let text = format!("secret_hash = \"{}\"\n", self.secret_hash);
+        let text = format!(
+            "secret_hash = \"{}\"\nkind = \"{}\"\n",
+            self.secret_hash,
+            self.kind.as_str()
+        );
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -81,13 +95,18 @@ impl EnrollmentRecord {
     pub fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)?;
         let mut secret_hash = None;
+        let mut kind = PeerKind::Database;
         for line in text.lines() {
             if let Some(v) = line.strip_prefix("secret_hash") {
                 let v = v.trim().trim_start_matches('=').trim().trim_matches('"');
                 secret_hash = Some(v.to_string());
+            } else if let Some(v) = line.strip_prefix("kind") {
+                let v = v.trim().trim_start_matches('=').trim().trim_matches('"');
+                kind = PeerKind::parse(v)?;
             }
         }
         Ok(Self {
+            kind,
             secret_hash: secret_hash.ok_or_else(|| {
                 BackupSasError::Enrollment("enrollment.secret missing hash".into())
             })?,

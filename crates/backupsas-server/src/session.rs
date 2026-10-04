@@ -1,8 +1,9 @@
 use crate::ServerState;
 use backupsas_core::{
     BackupId, BackupSasError, BackupState, ClientId, DEFAULT_REPO_NAME, DatabaseId,
-    EnrollmentRecord, EnrollmentSecret, ParticipantId, PublicKey, Result, SessionId, SessionInfo,
-    TrustedPeer, crypto, envelope::AuthProof, pin_matches,
+    EnrollmentRecord, EnrollmentSecret, ParticipantId, PeerKind, PublicKey, RemoteBackupInfo,
+    Result, SessionId, SessionInfo, TransferMode, TrustedPeer, crypto, envelope::AuthProof,
+    pin_matches,
 };
 use backupsas_protocol::{ChunkMismatch, FEATURES_V2, Message, read_frame, write_frame};
 use backupsas_storage::{BackupRecord, CreateUpload};
@@ -103,9 +104,9 @@ async fn handle_enroll(
     state: &ServerState,
     client_id: ClientId,
     public_key: PublicKey,
-    bootstrap_secret: String,
+    bootstrap_secret: backupsas_protocol::SecretString,
 ) -> Result<()> {
-    let secret = match EnrollmentSecret::parse(bootstrap_secret) {
+    let secret = match EnrollmentSecret::parse(bootstrap_secret.as_str()) {
         Ok(s) => s,
         Err(e) => {
             write_frame(
@@ -195,6 +196,54 @@ async fn handle_enroll(
         return Ok(());
     }
 
+    let already_enrolled = state
+        .trust
+        .lock()
+        .map_err(|_| BackupSasError::Other("trust lock poisoned".into()))?
+        .get(&client_id)
+        .is_some();
+    {
+        if already_enrolled {
+            write_frame(
+                writer,
+                &Message::EnrollFail {
+                    reason: "client identity is already enrolled".into(),
+                },
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+
+    // Claim the one-time secret atomically so concurrent enrollments with the
+    // same secret cannot both succeed.
+    let claimed = path.with_extension(format!("claimed-{}", BackupId::new().ulid()));
+    if std::fs::rename(&path, &claimed).is_err() {
+        write_frame(
+            writer,
+            &Message::EnrollFail {
+                reason: "enrollment secret is no longer available".into(),
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+    let record = match EnrollmentRecord::load(&claimed) {
+        Ok(r) if r.matches(&secret) => r,
+        _ => {
+            // A different secret was issued meanwhile: put it back untouched.
+            let _ = std::fs::rename(&claimed, &path);
+            write_frame(
+                writer,
+                &Message::EnrollFail {
+                    reason: "enrollment secret is no longer available".into(),
+                },
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
     let repos: Vec<String> = state
         .config
         .repositories
@@ -206,15 +255,33 @@ async fn handle_enroll(
     } else {
         repos
     };
-    let peer = TrustedPeer::new(ParticipantId::Client(client_id), public_key, repos);
-    {
+    let peer = TrustedPeer::new(ParticipantId::Client(client_id), public_key, repos)
+        .with_kind(record.kind);
+    let inserted = {
         let mut trust = state
             .trust
             .lock()
             .map_err(|_| BackupSasError::Other("trust lock poisoned".into()))?;
-        trust.insert(peer)?;
+        if trust.get(&client_id).is_some() {
+            Err(BackupSasError::Enrollment(
+                "client identity is already enrolled".into(),
+            ))
+        } else {
+            trust.insert(peer)
+        }
+    };
+    if let Err(e) = inserted {
+        let _ = std::fs::rename(&claimed, &path);
+        write_frame(
+            writer,
+            &Message::EnrollFail {
+                reason: e.to_string(),
+            },
+        )
+        .await?;
+        return Ok(());
     }
-    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(&claimed);
 
     write_frame(
         writer,
@@ -223,7 +290,7 @@ async fn handle_enroll(
         },
     )
     .await?;
-    info!(%client_id, "client enrolled");
+    info!(%client_id, kind = record.kind.as_str(), "client enrolled");
     Ok(())
 }
 
@@ -299,27 +366,19 @@ async fn finish_auth(
     )
     .await?;
 
-    handle_ready(
-        reader,
-        writer,
-        state,
-        &peer.repositories,
-        client_id,
-        session_id,
-        info,
-    )
-    .await
+    handle_ready(reader, writer, state, &peer, client_id, session_id, info).await
 }
 
 async fn handle_ready(
     reader: &mut ReadHalf<TlsStream<TcpStream>>,
     writer: &mut WriteHalf<TlsStream<TcpStream>>,
     state: &ServerState,
-    allowed_repos: &[String],
+    peer: &TrustedPeer,
     client_id: ClientId,
     session_id: SessionId,
     info: SessionInfo,
 ) -> Result<()> {
+    let allowed_repos = peer.repositories.as_slice();
     loop {
         if !info.is_active() {
             return send_error(writer, "session expired").await;
@@ -384,7 +443,24 @@ async fn handle_ready(
             } => {
                 require_session(&sid, &session_id)?;
                 let backup_id: BackupId = backup_id.parse()?;
-                let (repo, record) = state.storage.find_backup(&backup_id)?;
+                let found = state
+                    .storage
+                    .find_backup(&backup_id)
+                    .ok()
+                    .filter(|(repo, record)| {
+                        allowed_repos.iter().any(|r| r == repo.name())
+                            && record_owner(record) == client_id
+                    });
+                let Some((repo, record)) = found else {
+                    write_frame(
+                        writer,
+                        &Message::Error {
+                            reason: format!("backup `{backup_id}` not found"),
+                        },
+                    )
+                    .await?;
+                    continue;
+                };
                 let session = match record {
                     BackupRecord::Uploading(s) => s,
                     BackupRecord::Complete { .. } => {
@@ -420,14 +496,17 @@ async fn handle_ready(
                     Some(id) => {
                         let backup_id: BackupId = id.parse()?;
                         match state.storage.find_backup(&backup_id) {
-                            Ok((_, record)) => {
+                            Ok((repo, record))
+                                if allowed_repos.iter().any(|r| r == repo.name())
+                                    && record_owner(&record) == client_id =>
+                            {
                                 write_frame(writer, &status_resp(&backup_id, &record)).await?;
                             }
-                            Err(e) => {
+                            _ => {
                                 write_frame(
                                     writer,
                                     &Message::Error {
-                                        reason: e.to_string(),
+                                        reason: format!("backup `{backup_id}` not found"),
                                     },
                                 )
                                 .await?;
@@ -454,16 +533,26 @@ async fn handle_ready(
             } => {
                 require_session(&sid, &session_id)?;
                 let backup_id: BackupId = backup_id.parse()?;
-                if let Ok((repo, _)) = state.storage.find_backup(&backup_id) {
-                    repo.abort(&backup_id)?;
-                }
-                write_frame(
-                    writer,
-                    &Message::Aborted {
+                let reply = match state.storage.find_backup(&backup_id) {
+                    Ok((repo, record))
+                        if allowed_repos.iter().any(|r| r == repo.name())
+                            && record_owner(&record) == client_id =>
+                    {
+                        match repo.abort(&backup_id) {
+                            Ok(()) => Message::Aborted {
+                                backup_id: backup_id.to_string(),
+                            },
+                            Err(e) => Message::Error {
+                                reason: e.to_string(),
+                            },
+                        }
+                    }
+                    // Unknown or foreign backups: nothing to abort.
+                    _ => Message::Aborted {
                         backup_id: backup_id.to_string(),
                     },
-                )
-                .await?;
+                };
+                write_frame(writer, &reply).await?;
             }
             Message::SessionClose { .. } => return Ok(()),
             Message::OpenBackup {
@@ -577,6 +666,145 @@ async fn handle_ready(
                     }
                 }
             }
+            Message::ListBackups {
+                session_id: sid,
+                repository,
+            } => {
+                require_session(&sid, &session_id)?;
+                let reply = match list_backups(state, allowed_repos, client_id, &repository) {
+                    Ok(items) => Message::BackupList { items },
+                    Err(e) => Message::Error {
+                        reason: e.to_string(),
+                    },
+                };
+                write_frame(writer, &reply).await?;
+            }
+            Message::DeleteBackup {
+                session_id: sid,
+                backup_id,
+            } => {
+                require_session(&sid, &session_id)?;
+                let reply = match delete_backup(state, allowed_repos, client_id, &backup_id) {
+                    Ok(()) => {
+                        info!(%client_id, %backup_id, "backup deleted by owner");
+                        Message::Deleted { backup_id }
+                    }
+                    Err(e) => Message::Error {
+                        reason: e.to_string(),
+                    },
+                };
+                write_frame(writer, &reply).await?;
+            }
+            Message::PendingRelocations { session_id: sid } => {
+                require_session(&sid, &session_id)?;
+                let reply = match state.relocations.pending_for(&client_id) {
+                    Ok(notices) => Message::Relocations { notices },
+                    Err(e) => Message::Error {
+                        reason: e.to_string(),
+                    },
+                };
+                write_frame(writer, &reply).await?;
+            }
+            Message::AckRelocation {
+                session_id: sid,
+                relocation_id,
+            } => {
+                require_session(&sid, &session_id)?;
+                let result = state
+                    .relocations
+                    .ack_and_clean(&relocation_id, &client_id, &state.storage)
+                    .map(|_| ());
+                let reply = match result {
+                    Ok(()) => {
+                        info!(%client_id, %relocation_id, "relocation acknowledged");
+                        Message::RelocationAcked { relocation_id }
+                    }
+                    Err(e) => Message::Error {
+                        reason: e.to_string(),
+                    },
+                };
+                write_frame(writer, &reply).await?;
+            }
+            Message::TransferOffer {
+                session_id: sid,
+                transfer_id,
+                mode,
+                repository,
+                backup_id,
+                database_id,
+                owner_client_id,
+                owner_public_key,
+                total_size,
+                chunk_size,
+                chunk_count,
+                manifest_hash,
+            } => {
+                require_session(&sid, &session_id)?;
+                let accepted = accept_transfer(
+                    state,
+                    peer,
+                    client_id,
+                    &mode,
+                    &repository,
+                    &owner_client_id,
+                    &owner_public_key,
+                )
+                .and_then(|owner| {
+                    let backup_id: BackupId = backup_id.parse()?;
+                    let database_id: DatabaseId = database_id.parse()?;
+                    let repo = state.storage.repo(&repository)?;
+                    if let Some(path) =
+                        already_committed(state, &repository, &backup_id, owner, &manifest_hash)?
+                    {
+                        return Ok(Err((backup_id, path)));
+                    }
+                    let session = repo.create_upload(CreateUpload {
+                        backup_id,
+                        database_id,
+                        client_id: owner,
+                        total_size,
+                        chunk_size,
+                        chunk_count,
+                    })?;
+                    Ok(Ok((backup_id, session)))
+                });
+                match accepted {
+                    Ok(Err((backup_id, path))) => {
+                        info!(%client_id, %transfer_id, %backup_id, "transfer already committed");
+                        write_frame(
+                            writer,
+                            &Message::Committed {
+                                backup_id: backup_id.to_string(),
+                                path: path.display().to_string(),
+                            },
+                        )
+                        .await?;
+                    }
+                    Ok(Ok((backup_id, session))) => {
+                        info!(%client_id, %transfer_id, %backup_id, %mode, "incoming transfer");
+                        write_frame(
+                            writer,
+                            &Message::Created {
+                                backup_id: backup_id.to_string(),
+                                resume_from: session.next_sequence,
+                                has_manifest: session.has_manifest,
+                            },
+                        )
+                        .await?;
+                        handle_upload(reader, writer, state, &repository, backup_id, &session_id)
+                            .await?;
+                    }
+                    Err(e) => {
+                        write_frame(
+                            writer,
+                            &Message::Error {
+                                reason: e.to_string(),
+                            },
+                        )
+                        .await?;
+                    }
+                }
+            }
             other => {
                 write_frame(
                     writer,
@@ -589,6 +817,155 @@ async fn handle_ready(
             }
         }
     }
+}
+
+fn require_repo(allowed_repos: &[String], repository: &str) -> Result<()> {
+    if !allowed_repos.iter().any(|r| r == repository) {
+        return Err(BackupSasError::Auth(format!(
+            "client is not allowed to use repository `{repository}`"
+        )));
+    }
+    Ok(())
+}
+
+fn list_backups(
+    state: &ServerState,
+    allowed_repos: &[String],
+    client_id: ClientId,
+    repository: &str,
+) -> Result<Vec<RemoteBackupInfo>> {
+    require_repo(allowed_repos, repository)?;
+    let repo = state.storage.repo(repository)?;
+    let mut items = Vec::new();
+    for session in repo.list_sessions()? {
+        if session.client_id != client_id {
+            continue;
+        }
+        items.push(RemoteBackupInfo {
+            backup_id: session.backup_id.to_string(),
+            database_id: session.database_id.to_string(),
+            repository: repository.to_string(),
+            state: session.state.as_str().to_string(),
+            total_size: session.total_size,
+            chunk_count: session.chunk_count,
+            committed_at: String::new(),
+            relocated: false,
+            manifest_hash: String::new(),
+        });
+    }
+    for (_, meta) in repo.list_complete()? {
+        if meta.client_id != client_id {
+            continue;
+        }
+        items.push(RemoteBackupInfo {
+            backup_id: meta.backup_id.to_string(),
+            database_id: meta.database_id.to_string(),
+            repository: repository.to_string(),
+            state: meta.state.as_str().to_string(),
+            total_size: meta.total_size,
+            chunk_count: meta.chunk_count,
+            committed_at: meta
+                .committed_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+            relocated: state.relocations.is_moved_away(&meta.backup_id)?,
+            manifest_hash: backupsas_core::BackupManifest::from_slice(
+                &repo.read_manifest_bytes(&meta.backup_id)?,
+            )?
+            .manifest_hash,
+        });
+    }
+    items.sort_by(|a, b| a.backup_id.cmp(&b.backup_id));
+    Ok(items)
+}
+
+fn delete_backup(
+    state: &ServerState,
+    allowed_repos: &[String],
+    client_id: ClientId,
+    backup_id: &str,
+) -> Result<()> {
+    let backup_id: BackupId = backup_id.parse()?;
+    let (repo, _) = state.storage.find_backup(&backup_id)?;
+    require_repo(allowed_repos, repo.name())?;
+    repo.delete_owned(&backup_id, client_id)
+}
+
+/// `Some(path)` when the backup is already complete here for the same owner
+/// with the same manifest hash (idempotent transfer retry). A complete backup
+/// with a different owner or content is a conflict.
+fn already_committed(
+    state: &ServerState,
+    repository: &str,
+    backup_id: &BackupId,
+    owner: ClientId,
+    manifest_hash: &str,
+) -> Result<Option<std::path::PathBuf>> {
+    let Ok((repo, BackupRecord::Complete { path, metadata })) =
+        state.storage.find_backup(backup_id)
+    else {
+        return Ok(None);
+    };
+    if repo.name() != repository || metadata.client_id != owner {
+        return Err(BackupSasError::AlreadyComplete(backup_id.to_string()));
+    }
+    let manifest =
+        backupsas_core::BackupManifest::from_slice(&repo.read_manifest_bytes(backup_id)?)?;
+    if manifest.manifest_hash != manifest_hash {
+        return Err(BackupSasError::InvalidManifest(format!(
+            "backup {backup_id} already exists with a different manifest hash"
+        )));
+    }
+    Ok(Some(path))
+}
+
+/// Validate a node-to-node offer and make sure the owning database can later
+/// authenticate here with its existing identity (delegated trust).
+fn accept_transfer(
+    state: &ServerState,
+    peer: &TrustedPeer,
+    node_client_id: ClientId,
+    mode: &str,
+    repository: &str,
+    owner_client_id: &str,
+    owner_public_key: &[u8],
+) -> Result<ClientId> {
+    if peer.kind != PeerKind::Node {
+        return Err(BackupSasError::Auth(
+            "only enrolled nodes may push transfers (issue a `node` enrollment secret)".into(),
+        ));
+    }
+    mode.parse::<TransferMode>()?;
+    require_repo(&peer.repositories, repository)?;
+    state.storage.repo(repository)?;
+
+    let owner: ClientId = owner_client_id.parse()?;
+    let owner_pk = PublicKey::from_bytes(to_array32(owner_public_key)?)?;
+    let mut trust = state
+        .trust
+        .lock()
+        .map_err(|_| BackupSasError::Other("trust lock poisoned".into()))?;
+    match trust.get(&owner).cloned() {
+        Some(existing) => {
+            pin_matches(&existing.public_key, &owner_pk)?;
+            if !existing.allows_repo(repository) {
+                let mut updated = existing;
+                updated.repositories.push(repository.to_string());
+                trust.insert(updated)?;
+            }
+        }
+        None => {
+            let delegated = TrustedPeer::new(
+                ParticipantId::Client(owner),
+                owner_pk,
+                vec![repository.to_string()],
+            )
+            .delegated(node_client_id.to_string());
+            trust.insert(delegated)?;
+            info!(%owner, by = %node_client_id, "delegated trust for backup owner");
+        }
+    }
+    Ok(owner)
 }
 
 async fn handle_upload(
@@ -726,12 +1103,14 @@ async fn handle_upload(
                 backup_id: id,
             } => {
                 require_session(&sid, session_id)?;
-                let id: BackupId = id.parse()?;
-                repo.abort(&id)?;
+                if id != backup_id.to_string() {
+                    return send_error(writer, "abort backup_id mismatch").await;
+                }
+                repo.abort(&backup_id)?;
                 write_frame(
                     writer,
                     &Message::Aborted {
-                        backup_id: id.to_string(),
+                        backup_id: backup_id.to_string(),
                     },
                 )
                 .await?;
@@ -748,6 +1127,13 @@ async fn handle_upload(
                 return Ok(());
             }
         }
+    }
+}
+
+fn record_owner(record: &BackupRecord) -> ClientId {
+    match record {
+        BackupRecord::Uploading(s) => s.client_id,
+        BackupRecord::Complete { metadata, .. } => metadata.client_id,
     }
 }
 

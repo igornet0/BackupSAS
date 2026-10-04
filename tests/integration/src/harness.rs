@@ -152,3 +152,71 @@ pub async fn upload_memory_source(data_dir: &Path, source_data: Vec<u8>) -> (Bac
     };
     (outcome.backup_id, path)
 }
+
+/// A node whose `connect.json` advertises its real listening address.
+pub struct PublishedNode {
+    pub config: backupsas_core::ServerConfig,
+    pub descriptor: backupsas_core::ConnectDescriptor,
+    /// One-time secret from `init` (only on first boot).
+    pub secret: Option<EnrollmentSecret>,
+    pub addr: SocketAddr,
+    pub task: tokio::task::JoinHandle<()>,
+}
+
+impl PublishedNode {
+    /// Simulate a crash: stop serving without any graceful shutdown.
+    pub async fn kill(self) -> (backupsas_core::ServerConfig, SocketAddr) {
+        self.task.abort();
+        let _ = self.task.await;
+        (self.config, self.addr)
+    }
+}
+
+/// Boot (first time) or restart (same data dir, optionally same address) a node.
+pub async fn boot_published_node(data_dir: &Path, addr: Option<SocketAddr>) -> PublishedNode {
+    let fresh = !data_dir.join("server.toml").exists();
+    let secret = if fresh {
+        Some(
+            init_data_dir(data_dir, "127.0.0.1:0")
+                .unwrap()
+                .enrollment_secret,
+        )
+    } else {
+        None
+    };
+    let bind_addr = addr
+        .map(|a| a.to_string())
+        .unwrap_or_else(|| "127.0.0.1:0".into());
+    let (listener, addr) = bind(&bind_addr).await.unwrap();
+    let mut config = load_config(data_dir).unwrap();
+    config.public_endpoints = vec![addr.to_string()];
+    backupsas_server::save_config(&config).unwrap();
+    let descriptor = backupsas_server::refresh_descriptor(&config).unwrap();
+    let state = ServerState::from_config(config.clone()).unwrap();
+    let task = tokio::spawn(async move {
+        let _ = serve(listener, state).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    PublishedNode {
+        config,
+        descriptor,
+        secret,
+        addr,
+        task,
+    }
+}
+
+/// Client config for a database identity talking to a published node.
+pub fn descriptor_config(
+    descriptor: &backupsas_core::ConnectDescriptor,
+    identity: Identity,
+) -> BackupSasConfig {
+    BackupSasConfig::from_descriptor(
+        descriptor,
+        identity,
+        DEFAULT_REPO_NAME,
+        BackupEncryptionKey::new([7u8; 32]),
+    )
+    .unwrap()
+    .with_chunk_size(64 * 1024)
+}

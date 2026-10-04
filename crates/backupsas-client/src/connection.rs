@@ -14,10 +14,16 @@ pub struct Connection {
 
 impl Connection {
     pub async fn connect(config: &BackupSasConfig) -> Result<Self> {
-        let ca = config.ca_cert_path.as_ref().ok_or_else(|| {
-            backupsas_core::BackupSasError::Tls("ca_cert_path is required for TLS transport".into())
-        })?;
-        let tls_cfg = Arc::new(tls::load_client_tls(ca)?);
+        let tls_cfg = if let Some(pem) = &config.ca_cert_pem {
+            Arc::new(tls::client_tls_from_pem(pem)?)
+        } else {
+            let ca = config.ca_cert_path.as_ref().ok_or_else(|| {
+                backupsas_core::BackupSasError::Tls(
+                    "ca_cert_path or ca_cert_pem is required for TLS transport".into(),
+                )
+            })?;
+            Arc::new(tls::load_client_tls(ca)?)
+        };
         Self::connect_with_tls(config, tls_cfg).await
     }
 

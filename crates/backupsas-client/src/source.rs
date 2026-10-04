@@ -15,10 +15,21 @@ pub trait BackupSource: Send {
 }
 
 /// In-memory backup source for tests and SDK reference implementation.
-#[derive(Debug, Clone)]
+/// Holds plaintext: wiped on drop, `Debug` shows only the size.
+#[derive(Clone, zeroize::ZeroizeOnDrop)]
 pub struct MemoryBackupSource {
     data: Vec<u8>,
+    #[zeroize(skip)]
     label: Option<String>,
+}
+
+impl std::fmt::Debug for MemoryBackupSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryBackupSource")
+            .field("len", &self.data.len())
+            .field("label", &self.label)
+            .finish()
+    }
 }
 
 impl MemoryBackupSource {

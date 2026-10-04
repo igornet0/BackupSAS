@@ -49,6 +49,20 @@ impl StorageRoot {
         Err(BackupSasError::BackupNotFound(id.to_string()))
     }
 
+    /// Remove incomplete uploads idle longer than `max_idle` in every repository.
+    pub fn cleanup_stale_uploads(
+        &self,
+        max_idle: std::time::Duration,
+    ) -> Result<Vec<(String, BackupId)>> {
+        let mut out = Vec::new();
+        for (name, repo) in &self.repos {
+            for id in repo.cleanup_stale_uploads(max_idle)? {
+                out.push((name.clone(), id));
+            }
+        }
+        Ok(out)
+    }
+
     pub fn list_all(&self) -> Result<Vec<(String, BackupRecord)>> {
         let mut out = Vec::new();
         for (name, repo) in &self.repos {

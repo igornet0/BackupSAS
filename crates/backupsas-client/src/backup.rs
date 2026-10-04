@@ -3,8 +3,7 @@ use crate::chunker::{Chunk, chunk_reader};
 use crate::encryptor::{Aes256GcmEncryptor, EncryptedChunk};
 use crate::source::BackupSource;
 use backupsas_core::{
-    BackupId, BackupManifest, BackupSasConfig, BackupSasError, ChunkInfo, DEFAULT_KEY_ID,
-    DatabaseId, Result,
+    BackupId, BackupManifest, BackupSasConfig, BackupSasError, ChunkInfo, DatabaseId, Result,
 };
 use backupsas_protocol::Message;
 use std::io::Read;
@@ -179,7 +178,7 @@ impl AuthenticatedSession {
         database_id: DatabaseId,
         chunks: Vec<Chunk>,
     ) -> Result<UploadHandle<'_>> {
-        let encryptor = Aes256GcmEncryptor::new(*config.backup_encryption_key.as_bytes());
+        let encryptor = Aes256GcmEncryptor::new(config.backup_encryption_key.as_bytes());
         let encrypted = encryptor.encrypt_chunks(&chunks)?;
         let chunk_infos: Vec<ChunkInfo> = encrypted
             .iter()
@@ -196,7 +195,7 @@ impl AuthenticatedSession {
             config.chunk_size,
             total_size,
             chunk_infos,
-            DEFAULT_KEY_ID,
+            &config.key_id,
         );
         self.open_upload(config, database_id, manifest, encrypted, false)
             .await
