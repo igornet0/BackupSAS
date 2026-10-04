@@ -60,10 +60,10 @@ impl Identity {
         let toml = toml_public(&public)?;
         fs::write(dir.join("identity.toml"), toml)?;
         let key_path = dir.join("identity.key");
-        fs::write(
-            key_path.as_path(),
-            hex::encode(self.secret_key.export_bytes()),
-        )?;
+        let secret_hex = zeroize::Zeroizing::new(hex::encode(zeroize::Zeroizing::new(
+            self.secret_key.export_bytes(),
+        )));
+        fs::write(key_path.as_path(), secret_hex.as_bytes())?;
         let mut perms = fs::metadata(&key_path)?.permissions();
         perms.set_mode(0o600);
         fs::set_permissions(&key_path, perms)?;
@@ -73,15 +73,16 @@ impl Identity {
     pub fn load(dir: &Path) -> Result<Self> {
         let text = fs::read_to_string(dir.join("identity.toml"))?;
         let public: IdentityPublic = parse_public(&text)?;
-        let hex_key = fs::read_to_string(dir.join("identity.key"))?;
+        let hex_key = zeroize::Zeroizing::new(fs::read_to_string(dir.join("identity.key"))?);
         let bytes = hex::decode(hex_key.trim())
+            .map(zeroize::Zeroizing::new)
             .map_err(|e| BackupSasError::Auth(format!("identity.key: {e}")))?;
         if bytes.len() != 32 {
             return Err(BackupSasError::Auth("identity.key must be 32 bytes".into()));
         }
-        let mut arr = [0u8; 32];
+        let mut arr = zeroize::Zeroizing::new([0u8; 32]);
         arr.copy_from_slice(&bytes);
-        let secret_key = SecretKey::from_bytes(arr);
+        let secret_key = SecretKey::from_bytes(*arr);
         if secret_key.public_key() != public.public_key {
             return Err(BackupSasError::Auth(
                 "identity.key does not match identity.toml public key".into(),

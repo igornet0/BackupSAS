@@ -84,6 +84,30 @@ impl FsRepository {
         self.inner.read_complete_backup(backup_id, client_id)
     }
 
+    pub fn cleanup_stale_uploads(&self, max_idle: std::time::Duration) -> Result<Vec<BackupId>> {
+        self.inner.cleanup_stale_uploads(max_idle)
+    }
+
+    pub fn complete_metadata(&self, backup_id: &BackupId) -> Result<(PathBuf, BackupMetadata)> {
+        self.inner.complete_metadata(backup_id)
+    }
+
+    pub fn read_manifest_bytes(&self, backup_id: &BackupId) -> Result<Vec<u8>> {
+        self.inner.read_manifest_bytes(backup_id)
+    }
+
+    pub fn delete_owned(
+        &self,
+        backup_id: &BackupId,
+        client_id: backupsas_core::ClientId,
+    ) -> Result<()> {
+        self.inner.delete_owned(backup_id, client_id)
+    }
+
+    pub fn delete_complete(&self, backup_id: &BackupId) -> Result<()> {
+        self.inner.delete_complete(backup_id)
+    }
+
     pub fn read_complete_chunk(
         &self,
         backup_id: &BackupId,

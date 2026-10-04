@@ -1,11 +1,17 @@
 //! BackupSAS TLS server: identity auth, enrollment, and storage.
 
+pub mod peers;
+pub mod relocations;
 pub mod session;
 pub mod tls;
+pub mod transfer;
 pub mod trust;
 
-use backupsas_core::{EnrollmentRecord, EnrollmentSecret, Identity, Result, ServerConfig};
+use backupsas_core::{
+    ConnectDescriptor, EnrollmentRecord, EnrollmentSecret, Identity, PeerKind, Result, ServerConfig,
+};
 use backupsas_storage::StorageRoot;
+use relocations::RelocationStore;
 use rustls::ServerConfig as TlsServerConfig;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -22,6 +28,7 @@ pub struct ServerState {
     pub tls: Arc<TlsServerConfig>,
     pub identity: Arc<Identity>,
     pub trust: Arc<Mutex<TrustStore>>,
+    pub relocations: Arc<RelocationStore>,
 }
 
 impl ServerState {
@@ -31,7 +38,14 @@ impl ServerState {
         let storage = StorageRoot::open(&config)?;
         let identity = Identity::load(&config.data_dir.join("identity"))?;
         let trust = TrustStore::load(&config.data_dir.join("trusted"))?;
+        let relocations = RelocationStore::open(&config.data_dir)?;
+        cleanup_stale_uploads(&config, &storage);
+        // Crash recovery: finish deleting moved copies whose ack was recorded.
+        for id in relocations.finish_cleanups(&storage)? {
+            info!(relocation_id = %id, "completed relocation cleanup after restart");
+        }
         Ok(Self {
+            relocations: Arc::new(relocations),
             config: Arc::new(config),
             storage: Arc::new(storage),
             tls: Arc::new(tls),
@@ -46,7 +60,10 @@ pub struct InitResult {
     pub enrollment_secret: EnrollmentSecret,
     pub public_key: backupsas_core::PublicKey,
     pub fingerprint: backupsas_core::Fingerprint,
+    pub descriptor: ConnectDescriptor,
 }
+
+pub const CONNECT_FILE: &str = "connect.json";
 
 pub async fn bind(listen: &str) -> Result<(TcpListener, SocketAddr)> {
     let listener = TcpListener::bind(listen).await?;
@@ -54,7 +71,36 @@ pub async fn bind(listen: &str) -> Result<(TcpListener, SocketAddr)> {
     Ok((listener, addr))
 }
 
+/// Remove incomplete uploads idle longer than the configured TTL.
+fn cleanup_stale_uploads(config: &ServerConfig, storage: &StorageRoot) {
+    let Some(ttl) = config.stale_upload_ttl() else {
+        return;
+    };
+    match storage.cleanup_stale_uploads(ttl) {
+        Ok(removed) => {
+            for (repo, id) in removed {
+                info!(%repo, backup_id = %id, "removed stale incomplete upload");
+            }
+        }
+        Err(e) => warn!(error = %e, "stale upload cleanup failed"),
+    }
+}
+
+const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
+
 pub async fn serve(listener: TcpListener, state: ServerState) -> Result<()> {
+    let maintenance = state.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(MAINTENANCE_INTERVAL);
+        tick.tick().await; // startup cleanup already ran in `from_config`
+        loop {
+            tick.tick().await;
+            let s = maintenance.clone();
+            let _ =
+                tokio::task::spawn_blocking(move || cleanup_stale_uploads(&s.config, &s.storage))
+                    .await;
+        }
+    });
     let acceptor = TlsAcceptor::from(state.tls.clone());
     info!(addr = %listener.local_addr()?, "BackupSAS listening");
     loop {
@@ -118,13 +164,60 @@ pub fn init_data_dir(data_dir: &Path, listen: &str) -> Result<InitResult> {
         .map_err(|e| backupsas_core::BackupSasError::Serde(e.to_string()))?;
     std::fs::write(data_dir.join("server.toml"), toml)?;
     StorageRoot::open(&config)?;
+    let descriptor = build_descriptor(&config, &identity)?;
+    descriptor.save(&data_dir.join(CONNECT_FILE))?;
 
     Ok(InitResult {
         public_key: identity.public_key,
         fingerprint: identity.fingerprint(),
         enrollment_secret,
         config,
+        descriptor,
     })
+}
+
+pub fn save_config(config: &ServerConfig) -> Result<()> {
+    let toml = toml::to_string_pretty(config)
+        .map_err(|e| backupsas_core::BackupSasError::Serde(e.to_string()))?;
+    std::fs::write(config.data_dir.join("server.toml"), toml)?;
+    Ok(())
+}
+
+/// Build and sign the public connect descriptor for this node.
+pub fn build_descriptor(config: &ServerConfig, identity: &Identity) -> Result<ConnectDescriptor> {
+    let ca_cert_pem = std::fs::read_to_string(config.data_dir.join("tls").join("ca.crt"))?;
+    let endpoints = if config.public_endpoints.is_empty() {
+        vec![config.listen.clone()]
+    } else {
+        config.public_endpoints.clone()
+    };
+    ConnectDescriptor::new(
+        config.server_id,
+        identity.public_key,
+        endpoints,
+        tls::SERVER_NAME,
+        ca_cert_pem,
+        config.repositories.iter().map(|r| r.name.clone()).collect(),
+        backupsas_protocol::feature_names(backupsas_protocol::FEATURES_V2),
+    )
+    .sign(identity)
+}
+
+/// Load identity from `data_dir` and write a fresh `connect.json`.
+pub fn refresh_descriptor(config: &ServerConfig) -> Result<ConnectDescriptor> {
+    let identity = Identity::load(&config.data_dir.join("identity"))?;
+    let descriptor = build_descriptor(config, &identity)?;
+    descriptor.save(&config.data_dir.join(CONNECT_FILE))?;
+    Ok(descriptor)
+}
+
+/// Issue a new one-time enrollment secret, replacing any unused one.
+pub fn issue_enrollment_secret(data_dir: &Path, kind: PeerKind) -> Result<EnrollmentSecret> {
+    let secret = EnrollmentSecret::generate();
+    EnrollmentRecord::from_secret(&secret)
+        .with_kind(kind)
+        .save(&enrollment_path(data_dir))?;
+    Ok(secret)
 }
 
 pub fn load_config(data_dir: &Path) -> Result<ServerConfig> {

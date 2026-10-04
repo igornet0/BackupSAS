@@ -61,6 +61,11 @@ impl FilesystemBackupRepository {
         let mut held = self.lock(&req.backup_id)?;
         let _guard = held.write()?;
         if let Some(session) = self.load_session(&req.backup_id)? {
+            if session.client_id != req.client_id {
+                return Err(BackupSasError::Auth(
+                    "backup id is in use by another client".into(),
+                ));
+            }
             match session.state {
                 BackupState::Creating | BackupState::Uploading | BackupState::Verifying => {
                     return Ok(session);
@@ -90,6 +95,7 @@ impl FilesystemBackupRepository {
             next_sequence: 0,
             has_manifest: false,
             verified: false,
+            last_activity: None,
         };
         fs::create_dir_all(paths::staging_chunks(self.root(), &session.backup_id))?;
         self.save_session(&session)?;
@@ -355,6 +361,83 @@ impl FilesystemBackupRepository {
         fs::read(&chunk_path).map_err(Into::into)
     }
 
+    /// Path and metadata of a complete backup (no ownership check).
+    pub fn complete_metadata(&self, backup_id: &BackupId) -> Result<(PathBuf, BackupMetadata)> {
+        let backup_dir = self
+            .index_path(backup_id)
+            .ok_or_else(|| BackupSasError::BackupNotFound(backup_id.to_string()))?;
+        if !paths::backup_commit(&backup_dir).exists() {
+            return Err(BackupSasError::InvalidState {
+                id: backup_id.to_string(),
+                actual: BackupState::Uploading,
+                expected: BackupState::Complete,
+            });
+        }
+        let meta: BackupMetadata =
+            serde_json::from_slice(&fs::read(backup_dir.join("metadata.json"))?)?;
+        Ok((backup_dir, meta))
+    }
+
+    /// Exact manifest bytes of a complete backup, for node-to-node transfer.
+    pub fn read_manifest_bytes(&self, backup_id: &BackupId) -> Result<Vec<u8>> {
+        let (backup_dir, _) = self.complete_metadata(backup_id)?;
+        fs::read(backup_dir.join("manifest.json")).map_err(Into::into)
+    }
+
+    /// Delete a complete backup after checking the caller owns it.
+    pub fn delete_owned(&self, backup_id: &BackupId, client_id: ClientId) -> Result<()> {
+        let (_, meta) = self.complete_metadata(backup_id)?;
+        if meta.client_id != client_id {
+            return Err(BackupSasError::Auth(
+                "client not authorized for this backup".into(),
+            ));
+        }
+        self.delete_sync(backup_id)
+    }
+
+    /// Delete a complete backup without an ownership check (operator/relocation path).
+    pub fn delete_complete(&self, backup_id: &BackupId) -> Result<()> {
+        self.complete_metadata(backup_id)?;
+        self.delete_sync(backup_id)
+    }
+
+    /// Remove incomplete uploads idle for longer than `max_idle`.
+    ///
+    /// Sessions whose lock is currently held (an upload in progress) are
+    /// skipped, and idleness is re-checked under the lock, so an active or
+    /// recently resumed upload is never removed. Complete backups are never
+    /// touched. Returns the removed backup ids.
+    pub fn cleanup_stale_uploads(&self, max_idle: std::time::Duration) -> Result<Vec<BackupId>> {
+        let now = OffsetDateTime::now_utc();
+        let is_stale = |s: &UploadSession| {
+            s.state != BackupState::Complete
+                && (now - s.last_activity_or_created()).unsigned_abs() >= max_idle
+        };
+        let mut removed = Vec::new();
+        for session in self.list_sessions()? {
+            if !is_stale(&session) {
+                continue;
+            }
+            let id = session.backup_id;
+            let mut held = self.lock(&id)?;
+            let Ok(_guard) = held.lock.try_write() else {
+                continue; // in use right now
+            };
+            match self.load_session(&id)? {
+                Some(current) if is_stale(&current) => {}
+                _ => continue,
+            }
+            self.remove_staging(&id)?;
+            let _ = fs::remove_file(paths::session_json(self.root(), &id));
+            removed.push(id);
+        }
+        // Lock files of removed sessions are released above; drop them now.
+        for id in &removed {
+            let _ = fs::remove_file(paths::session_lock(self.root(), id));
+        }
+        Ok(removed)
+    }
+
     // --- BackupRepository implementation (sync core) ---
 
     fn create_sync(&self, manifest: &BackupManifest) -> Result<BackupId> {
@@ -379,6 +462,7 @@ impl FilesystemBackupRepository {
             next_sequence: 0,
             has_manifest: true,
             verified: false,
+            last_activity: None,
         };
         fs::create_dir_all(paths::staging_chunks(self.root(), &backup_id))?;
         let manifest_bytes = manifest.to_vec()?;
@@ -650,7 +734,9 @@ impl FilesystemBackupRepository {
     }
 
     fn save_session(&self, session: &UploadSession) -> Result<()> {
-        let bytes = serde_json::to_vec_pretty(session)?;
+        let mut session = session.clone();
+        session.last_activity = Some(OffsetDateTime::now_utc());
+        let bytes = serde_json::to_vec_pretty(&session)?;
         paths::atomic_write(
             &paths::session_json(self.root(), &session.backup_id),
             &bytes,
@@ -815,6 +901,122 @@ mod tests {
             }
             other => panic!("expected complete, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn delete_owned_checks_owner_and_manifest_bytes_roundtrip() {
+        let (_tmp, repo) = temp_repo();
+        let backup_id = BackupId::new();
+        let database_id = DatabaseId::new();
+        let owner = ClientId::new();
+        let (chunks, chunk_infos, total) = make_chunks(2, 16);
+        repo.create_upload(CreateUpload {
+            backup_id,
+            database_id,
+            client_id: owner,
+            total_size: total,
+            chunk_size: 16,
+            chunk_count: 2,
+        })
+        .unwrap();
+        let manifest_bytes = BackupManifest::new(
+            backup_id,
+            database_id,
+            16,
+            total,
+            chunk_infos,
+            DEFAULT_KEY_ID,
+        )
+        .to_vec()
+        .unwrap();
+        repo.store_manifest(&backup_id, &manifest_bytes).unwrap();
+        for (i, chunk) in chunks.iter().enumerate() {
+            repo.write_chunk_protocol(&backup_id, i as u32, &hash_bytes(chunk), chunk)
+                .unwrap();
+        }
+        assert!(repo.verify_upload(&backup_id).unwrap().ok);
+        repo.commit(&backup_id).unwrap();
+
+        assert_eq!(
+            repo.read_manifest_bytes(&backup_id).unwrap(),
+            manifest_bytes
+        );
+        let (_, meta) = repo.complete_metadata(&backup_id).unwrap();
+        assert_eq!(meta.client_id, owner);
+
+        assert!(repo.delete_owned(&backup_id, ClientId::new()).is_err());
+        repo.delete_owned(&backup_id, owner).unwrap();
+        assert!(repo.status(&backup_id).is_err());
+    }
+
+    fn partial_upload(repo: &FilesystemBackupRepository) -> BackupId {
+        let backup_id = BackupId::new();
+        let database_id = DatabaseId::new();
+        let (chunks, chunk_infos, total) = make_chunks(3, 16);
+        repo.create_upload(CreateUpload {
+            backup_id,
+            database_id,
+            client_id: ClientId::new(),
+            total_size: total,
+            chunk_size: 16,
+            chunk_count: 3,
+        })
+        .unwrap();
+        let manifest = BackupManifest::new(
+            backup_id,
+            database_id,
+            16,
+            total,
+            chunk_infos,
+            DEFAULT_KEY_ID,
+        );
+        repo.store_manifest(&backup_id, &manifest.to_vec().unwrap())
+            .unwrap();
+        repo.write_chunk_protocol(&backup_id, 0, &hash_bytes(&chunks[0]), &chunks[0])
+            .unwrap();
+        backup_id
+    }
+
+    #[test]
+    fn stale_upload_cleanup_keeps_recent_locked_and_complete() {
+        use std::time::Duration;
+        let (_tmp, repo) = temp_repo();
+        let stale = partial_upload(&repo);
+        let busy = partial_upload(&repo);
+
+        // Recent activity: nothing is removed with a 1h TTL.
+        assert!(
+            repo.cleanup_stale_uploads(Duration::from_secs(3600))
+                .unwrap()
+                .is_empty()
+        );
+
+        // A held session lock (upload in progress) protects `busy`.
+        let mut held = repo.lock(&busy).unwrap();
+        let guard = held.write().unwrap();
+        let removed = repo.cleanup_stale_uploads(Duration::ZERO).unwrap();
+        drop(guard);
+        assert_eq!(removed, vec![stale]);
+        assert!(repo.status(&stale).is_err());
+        assert!(!paths::staging_dir(repo.root(), &stale).exists());
+        assert!(matches!(
+            repo.status(&busy).unwrap(),
+            BackupRecord::Uploading(_)
+        ));
+
+        // Old session files without `last_activity` fall back to `created_at`.
+        let path = paths::session_json(repo.root(), &busy);
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        v.as_object_mut().unwrap().remove("last_activity");
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        assert!(matches!(
+            repo.status(&busy).unwrap(),
+            BackupRecord::Uploading(_)
+        ));
+        assert_eq!(
+            repo.cleanup_stale_uploads(Duration::ZERO).unwrap(),
+            vec![busy]
+        );
     }
 
     #[test]

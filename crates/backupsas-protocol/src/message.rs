@@ -1,17 +1,77 @@
 use crate::frame::FrameHeader;
 use crate::wire::{WireReader, WireWriter};
-use backupsas_core::{BackupSasError, Result};
+use backupsas_core::{BackupSasError, RelocationNotice, RemoteBackupInfo, Result};
 
 pub const FEATURE_RESUME: u64 = 1 << 0;
 pub const FEATURE_VERIFY: u64 = 1 << 1;
 pub const FEATURE_ENROLL: u64 = 1 << 2;
 pub const FEATURE_SESSION: u64 = 1 << 3;
 pub const FEATURE_RESTORE: u64 = 1 << 4;
-pub const FEATURES_V2: u64 =
-    FEATURE_RESUME | FEATURE_VERIFY | FEATURE_ENROLL | FEATURE_SESSION | FEATURE_RESTORE;
+pub const FEATURE_LIST: u64 = 1 << 5;
+pub const FEATURE_TRANSFER: u64 = 1 << 6;
+pub const FEATURE_RELOCATE: u64 = 1 << 7;
+pub const FEATURES_V2: u64 = FEATURE_RESUME
+    | FEATURE_VERIFY
+    | FEATURE_ENROLL
+    | FEATURE_SESSION
+    | FEATURE_RESTORE
+    | FEATURE_LIST
+    | FEATURE_TRANSFER
+    | FEATURE_RELOCATE;
+
+/// Feature names advertised in the public connect descriptor.
+pub fn feature_names(features: Features) -> Vec<String> {
+    [
+        (FEATURE_RESUME, "resume"),
+        (FEATURE_VERIFY, "verify"),
+        (FEATURE_ENROLL, "enroll"),
+        (FEATURE_SESSION, "session"),
+        (FEATURE_RESTORE, "restore"),
+        (FEATURE_LIST, "list"),
+        (FEATURE_TRANSFER, "transfer"),
+        (FEATURE_RELOCATE, "relocate"),
+    ]
+    .into_iter()
+    .filter(|(bit, _)| features & bit != 0)
+    .map(|(_, name)| name.to_string())
+    .collect()
+}
 pub const FEATURES_V1: u64 = FEATURE_RESUME | FEATURE_VERIFY;
 
 pub type Features = u64;
+
+/// A secret carried on the wire (enrollment secret). Redacted in `Debug`,
+/// wiped on drop.
+#[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for SecretString {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretString([redacted])")
+    }
+}
 
 const T_HELLO: u8 = 0x01;
 const T_HELLO_ACK: u8 = 0x02;
@@ -51,6 +111,17 @@ const T_OPEN_BACKUP: u8 = 0x41;
 const T_OPEN_BACKUP_OK: u8 = 0x42;
 const T_READ_CHUNK: u8 = 0x43;
 const T_READ_CHUNK_OK: u8 = 0x44;
+
+const T_LIST_BACKUPS: u8 = 0x50;
+const T_BACKUP_LIST: u8 = 0x51;
+const T_DELETE_BACKUP: u8 = 0x52;
+const T_DELETED: u8 = 0x53;
+const T_PENDING_RELOCATIONS: u8 = 0x54;
+const T_RELOCATIONS: u8 = 0x55;
+const T_ACK_RELOCATION: u8 = 0x56;
+const T_RELOCATION_ACKED: u8 = 0x57;
+
+const T_TRANSFER_OFFER: u8 = 0x60;
 const T_ERROR: u8 = 0xFF;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,7 +159,7 @@ pub enum Message {
     Enroll {
         client_id: String,
         client_public_key: Vec<u8>,
-        bootstrap_secret: String,
+        bootstrap_secret: SecretString,
     },
     EnrollChallenge {
         nonce: Vec<u8>,
@@ -213,6 +284,54 @@ pub enum Message {
         sequence: u32,
         payload: Vec<u8>,
     },
+    /// List backups in a repository the client may access.
+    ListBackups {
+        session_id: String,
+        repository: String,
+    },
+    BackupList {
+        items: Vec<RemoteBackupInfo>,
+    },
+    /// Delete a complete backup owned by the client (retention).
+    DeleteBackup {
+        session_id: String,
+        backup_id: String,
+    },
+    Deleted {
+        backup_id: String,
+    },
+    /// Ask for relocation notices addressed to this client.
+    PendingRelocations {
+        session_id: String,
+    },
+    Relocations {
+        notices: Vec<RelocationNotice>,
+    },
+    AckRelocation {
+        session_id: String,
+        relocation_id: String,
+    },
+    RelocationAcked {
+        relocation_id: String,
+    },
+    /// Node-to-node: offer an already encrypted backup on behalf of its owner.
+    /// Answered with `Created`, then the normal manifest/chunk/verify/commit flow.
+    TransferOffer {
+        session_id: String,
+        transfer_id: String,
+        mode: String,
+        repository: String,
+        backup_id: String,
+        database_id: String,
+        owner_client_id: String,
+        owner_public_key: Vec<u8>,
+        total_size: u64,
+        chunk_size: u64,
+        chunk_count: u32,
+        /// Manifest hash of the source copy; lets the target answer an
+        /// already-committed identical backup idempotently with `Committed`.
+        manifest_hash: String,
+    },
     Error {
         reason: String,
     },
@@ -256,6 +375,15 @@ impl Message {
             Self::OpenBackupOk { .. } => "OPEN_BACKUP_OK",
             Self::ReadChunk { .. } => "READ_CHUNK",
             Self::ReadChunkOk { .. } => "READ_CHUNK_OK",
+            Self::ListBackups { .. } => "LIST_BACKUPS",
+            Self::BackupList { .. } => "BACKUP_LIST",
+            Self::DeleteBackup { .. } => "DELETE_BACKUP",
+            Self::Deleted { .. } => "DELETED",
+            Self::PendingRelocations { .. } => "PENDING_RELOCATIONS",
+            Self::Relocations { .. } => "RELOCATIONS",
+            Self::AckRelocation { .. } => "ACK_RELOCATION",
+            Self::RelocationAcked { .. } => "RELOCATION_ACKED",
+            Self::TransferOffer { .. } => "TRANSFER_OFFER",
             Self::Error { .. } => "ERROR",
         }
     }
@@ -297,6 +425,15 @@ impl Message {
             Self::OpenBackupOk { .. } => T_OPEN_BACKUP_OK,
             Self::ReadChunk { .. } => T_READ_CHUNK,
             Self::ReadChunkOk { .. } => T_READ_CHUNK_OK,
+            Self::ListBackups { .. } => T_LIST_BACKUPS,
+            Self::BackupList { .. } => T_BACKUP_LIST,
+            Self::DeleteBackup { .. } => T_DELETE_BACKUP,
+            Self::Deleted { .. } => T_DELETED,
+            Self::PendingRelocations { .. } => T_PENDING_RELOCATIONS,
+            Self::Relocations { .. } => T_RELOCATIONS,
+            Self::AckRelocation { .. } => T_ACK_RELOCATION,
+            Self::RelocationAcked { .. } => T_RELOCATION_ACKED,
+            Self::TransferOffer { .. } => T_TRANSFER_OFFER,
             Self::Error { .. } => T_ERROR,
         }
     }
@@ -347,7 +484,7 @@ impl Message {
             } => {
                 w.write_str(client_id);
                 w.write_bytes(client_public_key);
-                w.write_str(bootstrap_secret);
+                w.write_str(bootstrap_secret.as_str());
             }
             Self::EnrollChallenge { nonce } => w.write_bytes(nonce),
             Self::EnrollProof {
@@ -540,6 +677,59 @@ impl Message {
                 w.write_u32(*sequence);
                 w.write_bytes(payload);
             }
+            Self::ListBackups {
+                session_id,
+                repository,
+            } => {
+                w.write_str(session_id);
+                w.write_str(repository);
+            }
+            Self::BackupList { items } => w.write_bytes(&json_bytes(items)),
+            Self::DeleteBackup {
+                session_id,
+                backup_id,
+            } => {
+                w.write_str(session_id);
+                w.write_str(backup_id);
+            }
+            Self::Deleted { backup_id } => w.write_str(backup_id),
+            Self::PendingRelocations { session_id } => w.write_str(session_id),
+            Self::Relocations { notices } => w.write_bytes(&json_bytes(notices)),
+            Self::AckRelocation {
+                session_id,
+                relocation_id,
+            } => {
+                w.write_str(session_id);
+                w.write_str(relocation_id);
+            }
+            Self::RelocationAcked { relocation_id } => w.write_str(relocation_id),
+            Self::TransferOffer {
+                session_id,
+                transfer_id,
+                mode,
+                repository,
+                backup_id,
+                database_id,
+                owner_client_id,
+                owner_public_key,
+                total_size,
+                chunk_size,
+                chunk_count,
+                manifest_hash,
+            } => {
+                w.write_str(session_id);
+                w.write_str(transfer_id);
+                w.write_str(mode);
+                w.write_str(repository);
+                w.write_str(backup_id);
+                w.write_str(database_id);
+                w.write_str(owner_client_id);
+                w.write_bytes(owner_public_key);
+                w.write_u64(*total_size);
+                w.write_u64(*chunk_size);
+                w.write_u32(*chunk_count);
+                w.write_str(manifest_hash);
+            }
             Self::Error { reason } => w.write_str(reason),
         }
         w.finish()
@@ -583,7 +773,7 @@ impl Message {
             T_ENROLL => Self::Enroll {
                 client_id: r.read_string()?,
                 client_public_key: r.read_bytes()?.to_vec(),
-                bootstrap_secret: r.read_string()?,
+                bootstrap_secret: SecretString::from(r.read_string()?),
             },
             T_ENROLL_CHALLENGE => Self::EnrollChallenge {
                 nonce: r.read_bytes()?.to_vec(),
@@ -723,6 +913,47 @@ impl Message {
                 sequence: r.read_u32()?,
                 payload: r.read_bytes()?.to_vec(),
             },
+            T_LIST_BACKUPS => Self::ListBackups {
+                session_id: r.read_string()?,
+                repository: r.read_string()?,
+            },
+            T_BACKUP_LIST => Self::BackupList {
+                items: json_decode(r.read_bytes()?)?,
+            },
+            T_DELETE_BACKUP => Self::DeleteBackup {
+                session_id: r.read_string()?,
+                backup_id: r.read_string()?,
+            },
+            T_DELETED => Self::Deleted {
+                backup_id: r.read_string()?,
+            },
+            T_PENDING_RELOCATIONS => Self::PendingRelocations {
+                session_id: r.read_string()?,
+            },
+            T_RELOCATIONS => Self::Relocations {
+                notices: json_decode(r.read_bytes()?)?,
+            },
+            T_ACK_RELOCATION => Self::AckRelocation {
+                session_id: r.read_string()?,
+                relocation_id: r.read_string()?,
+            },
+            T_RELOCATION_ACKED => Self::RelocationAcked {
+                relocation_id: r.read_string()?,
+            },
+            T_TRANSFER_OFFER => Self::TransferOffer {
+                session_id: r.read_string()?,
+                transfer_id: r.read_string()?,
+                mode: r.read_string()?,
+                repository: r.read_string()?,
+                backup_id: r.read_string()?,
+                database_id: r.read_string()?,
+                owner_client_id: r.read_string()?,
+                owner_public_key: r.read_bytes()?.to_vec(),
+                total_size: r.read_u64()?,
+                chunk_size: r.read_u64()?,
+                chunk_count: r.read_u32()?,
+                manifest_hash: r.read_string()?,
+            },
             T_ERROR => Self::Error {
                 reason: r.read_string()?,
             },
@@ -735,6 +966,15 @@ impl Message {
         r.finish()?;
         Ok(msg)
     }
+}
+
+fn json_bytes<T: serde::Serialize>(value: &T) -> Vec<u8> {
+    // Serializing plain data structs into a Vec cannot fail.
+    serde_json::to_vec(value).unwrap_or_default()
+}
+
+fn json_decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    serde_json::from_slice(bytes).map_err(|e| BackupSasError::Protocol(format!("payload: {e}")))
 }
 
 #[cfg(test)]
@@ -827,5 +1067,70 @@ mod tests {
         roundtrip(Message::Error {
             reason: "boom".into(),
         });
+    }
+
+    #[test]
+    fn enroll_secret_is_redacted_in_debug() {
+        let msg = Message::Enroll {
+            client_id: "cli_x".into(),
+            client_public_key: vec![6; 32],
+            bootstrap_secret: "bs_enroll_deadbeef".into(),
+        };
+        let dbg = format!("{msg:?}");
+        assert!(!dbg.contains("deadbeef"), "{dbg}");
+    }
+
+    #[test]
+    fn list_transfer_relocation_roundtrip() {
+        roundtrip(Message::ListBackups {
+            session_id: "ses_1".into(),
+            repository: "avrora-prod".into(),
+        });
+        roundtrip(Message::BackupList {
+            items: vec![RemoteBackupInfo {
+                backup_id: "bkp_1".into(),
+                database_id: "db_1".into(),
+                repository: "avrora-prod".into(),
+                state: "COMPLETE".into(),
+                total_size: 10,
+                chunk_count: 1,
+                committed_at: "2026-01-01T00:00:00Z".into(),
+                relocated: false,
+                manifest_hash: "blake3:aa".into(),
+            }],
+        });
+        roundtrip(Message::DeleteBackup {
+            session_id: "ses_1".into(),
+            backup_id: "bkp_1".into(),
+        });
+        roundtrip(Message::Deleted {
+            backup_id: "bkp_1".into(),
+        });
+        roundtrip(Message::PendingRelocations {
+            session_id: "ses_1".into(),
+        });
+        roundtrip(Message::Relocations { notices: vec![] });
+        roundtrip(Message::AckRelocation {
+            session_id: "ses_1".into(),
+            relocation_id: "rel_1".into(),
+        });
+        roundtrip(Message::RelocationAcked {
+            relocation_id: "rel_1".into(),
+        });
+        roundtrip(Message::TransferOffer {
+            session_id: "ses_1".into(),
+            transfer_id: "trf_1".into(),
+            mode: "move".into(),
+            repository: "avrora-prod".into(),
+            backup_id: "bkp_1".into(),
+            database_id: "db_1".into(),
+            owner_client_id: "cli_1".into(),
+            owner_public_key: vec![1; 32],
+            total_size: 5,
+            chunk_size: 5,
+            chunk_count: 1,
+            manifest_hash: "blake3:aa".into(),
+        });
+        assert!(feature_names(FEATURES_V2).contains(&"transfer".to_string()));
     }
 }

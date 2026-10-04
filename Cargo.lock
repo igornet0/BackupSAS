@@ -21,6 +21,7 @@ dependencies = [
  "cfg-if",
  "cipher",
  "cpufeatures 0.2.17",
+ "zeroize",
 ]
 
 [[package]]
@@ -35,6 +36,7 @@ dependencies = [
  "ctr",
  "ghash",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -165,6 +167,7 @@ dependencies = [
 name = "backupsas-client"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "aes-gcm",
  "backupsas-core",
  "backupsas-protocol",
@@ -177,6 +180,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -207,6 +211,7 @@ dependencies = [
  "backupsas-cli",
  "backupsas-client",
  "backupsas-core",
+ "backupsas-protocol",
  "backupsas-server",
  "backupsas-storage",
  "serde_json",
@@ -223,13 +228,17 @@ version = "0.1.0"
 dependencies = [
  "backupsas-core",
  "bytes",
+ "serde",
+ "serde_json",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
 name = "backupsas-server"
 version = "0.1.0"
 dependencies = [
+ "backupsas-client",
  "backupsas-core",
  "backupsas-protocol",
  "backupsas-storage",
@@ -238,6 +247,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror",
  "time",

@@ -6,7 +6,9 @@ license.workspace = true
 description = "BackupSAS upload client (chunker, encryptor, resumable push)"
 
 [dependencies]
-aes-gcm.workspace = true
+aes = { version = "0.8", features = ["zeroize"] }
+aes-gcm = { workspace = true, features = ["zeroize"] }
+zeroize.workspace = true
 backupsas-core.workspace = true
 backupsas-protocol.workspace = true
 blake3.workspace = true

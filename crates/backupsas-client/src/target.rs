@@ -28,11 +28,28 @@ pub trait RestoreTarget: Send {
 }
 
 /// In-memory restore target for tests and SDK reference implementation.
-#[derive(Debug, Clone)]
+/// Holds plaintext: wiped on drop unless taken with [`Self::into_bytes`];
+/// `Debug` shows only the size.
+#[derive(Clone)]
 pub struct MemoryRestoreTarget {
     data: Vec<u8>,
     metadata: Option<RestoreMetadata>,
     finalized: bool,
+}
+
+impl Drop for MemoryRestoreTarget {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.data);
+    }
+}
+
+impl std::fmt::Debug for MemoryRestoreTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryRestoreTarget")
+            .field("len", &self.data.len())
+            .field("finalized", &self.finalized)
+            .finish()
+    }
 }
 
 impl MemoryRestoreTarget {
@@ -64,8 +81,8 @@ impl MemoryRestoreTarget {
         &self.data
     }
 
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.data
+    pub fn into_bytes(mut self) -> Vec<u8> {
+        std::mem::take(&mut self.data)
     }
 }
 

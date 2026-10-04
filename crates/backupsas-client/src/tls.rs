@@ -24,9 +24,26 @@ fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
 }
 
 pub fn load_client_tls(ca_cert: &Path) -> Result<ClientConfig> {
+    client_tls_from_certs(load_certs(ca_cert)?)
+}
+
+/// Build a client TLS config trusting the CA given as PEM text.
+pub fn client_tls_from_pem(pem: &str) -> Result<ClientConfig> {
+    let certs = rustls_pemfile::certs(&mut pem.as_bytes())
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| BackupSasError::Tls(format!("CA pem: {e}")))?;
+    if certs.is_empty() {
+        return Err(BackupSasError::Tls(
+            "CA pem contains no certificates".into(),
+        ));
+    }
+    client_tls_from_certs(certs)
+}
+
+fn client_tls_from_certs(certs: Vec<CertificateDer<'static>>) -> Result<ClientConfig> {
     install_crypto_provider();
     let mut roots = RootCertStore::empty();
-    for cert in load_certs(ca_cert)? {
+    for cert in certs {
         roots
             .add(cert)
             .map_err(|e| BackupSasError::Tls(format!("add CA: {e}")))?;

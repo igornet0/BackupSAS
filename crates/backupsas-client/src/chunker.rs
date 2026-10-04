@@ -1,10 +1,21 @@
 use backupsas_core::{BackupSasError, Result};
 use std::io::Read;
 
-#[derive(Debug, Clone)]
+/// Plaintext chunk. Wiped on drop; `Debug` shows only the length.
+#[derive(Clone, zeroize::ZeroizeOnDrop)]
 pub struct Chunk {
+    #[zeroize(skip)]
     pub sequence: u32,
     pub plaintext: Vec<u8>,
+}
+
+impl std::fmt::Debug for Chunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Chunk")
+            .field("sequence", &self.sequence)
+            .field("plaintext_len", &self.plaintext.len())
+            .finish()
+    }
 }
 
 pub fn chunk_reader<R: Read>(reader: R, chunk_size: usize) -> Result<Vec<Chunk>> {

@@ -65,7 +65,7 @@ pub async fn authenticate(config: &BackupSasConfig) -> Result<AuthenticatedSessi
         conn.send(&Message::Enroll {
             client_id: config.client_identity.id.to_string(),
             client_public_key: config.client_identity.public_key.to_bytes().to_vec(),
-            bootstrap_secret: secret.as_str().to_string(),
+            bootstrap_secret: secret.as_str().into(),
         })
         .await?;
         match conn.recv().await? {

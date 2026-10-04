@@ -13,6 +13,7 @@ backupsas-storage.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+backupsas-protocol.workspace = true
 backupsas-cli = { path = "../../crates/backupsas-cli" }
 backupsas-client.workspace = true
 backupsas-core.workspace = true

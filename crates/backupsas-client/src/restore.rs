@@ -126,7 +126,7 @@ impl BackupHandle<'_> {
             label: None,
         })?;
 
-        let encryptor = Aes256GcmEncryptor::new(*config.backup_encryption_key.as_bytes());
+        let encryptor = Aes256GcmEncryptor::new(config.backup_encryption_key.as_bytes());
         let mut plaintext_offset = 0u64;
         let mut verified_hashes = Vec::with_capacity(self.manifest.chunks.len());
         let chunks: Vec<_> = self.manifest.chunks.clone();

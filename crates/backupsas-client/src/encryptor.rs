@@ -27,13 +27,15 @@ pub trait ChunkEncryptor {
     fn encrypt(&self, sequence: u32, plaintext: &[u8]) -> Result<EncryptedChunk>;
 }
 
+/// AES-256-GCM chunk cipher. The key schedule is wiped on drop (`aes`
+/// `zeroize` feature); no `Debug` impl so the key cannot be printed.
 pub struct Aes256GcmEncryptor {
     cipher: Aes256Gcm,
 }
 
 impl Aes256GcmEncryptor {
-    pub fn new(key: [u8; 32]) -> Self {
-        let key = Key::<Aes256Gcm>::from_slice(&key);
+    pub fn new(key: &[u8; 32]) -> Self {
+        let key = Key::<Aes256Gcm>::from_slice(key);
         Self {
             cipher: Aes256Gcm::new(key),
         }
@@ -77,7 +79,7 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip() {
-        let enc = Aes256GcmEncryptor::new([7u8; 32]);
+        let enc = Aes256GcmEncryptor::new(&[7u8; 32]);
         let chunk = enc.encrypt(0, b"secret-backup").unwrap();
         assert!(chunk.hash.starts_with("blake3:"));
         let plain = enc.decrypt(&chunk.payload).unwrap();
